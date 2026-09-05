@@ -1,0 +1,26 @@
+{
+  "name": "linkedin-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "MCP server that lets Claude publish and manage LinkedIn posts for a member profile and a company page.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "auth": "node src/auth/cli.ts",
+    "whoami": "node src/scripts/whoami.ts",
+    "providers": "node src/scripts/providers.ts",
+    "mcp": "node src/mcp/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "dotenv": "^17.4.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}

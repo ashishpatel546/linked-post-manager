@@ -1,0 +1,10 @@
+node_modules/
+.env
+.env.local
+*.log
+
+# Runtime state: tokens and the publish audit trail. Never commit either.
+.state/
+drafts/**/*.published.md
+drafts
+mcp.json
