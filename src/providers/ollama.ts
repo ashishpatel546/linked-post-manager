@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import {
   ProviderError,
   type ChatMessage,
+  type CompleteOptions,
   type DraftProvider,
   type ProviderStatus,
 } from "./types.ts";
@@ -38,10 +39,22 @@ export const ollamaProvider: DraftProvider = {
       const wanted = config.ollamaModel;
       const present = names.some((name) => name === wanted || name.startsWith(`${wanted}:`));
 
+      // `/api/tags` lists only what is stored on this machine. A "-cloud" model
+      // runs on Ollama's infrastructure and never appears there, so treating an
+      // absence as "not pulled" reports a working model as unavailable and
+      // greys it out in the UI. Trust the suffix and let `complete()` surface a
+      // real failure if the model turns out not to exist after all.
+      const isCloud = wanted.endsWith("-cloud") || wanted.endsWith(":cloud");
+
+      // Everything installed, plus the configured cloud model if it is one —
+      // it will not be in the tags list but is just as selectable.
+      const models = [...new Set([...(isCloud ? [wanted] : []), ...names.filter(Boolean)])];
+
       return {
         ...base,
         reachable: true,
-        ...(present
+        models,
+        ...(present || isCloud
           ? {}
           : {
               configured: false,
@@ -58,14 +71,14 @@ export const ollamaProvider: DraftProvider = {
     }
   },
 
-  async complete(messages: ChatMessage[]): Promise<string> {
+  async complete(messages: ChatMessage[], options: CompleteOptions = {}): Promise<string> {
     let response: Response;
     try {
       response = await fetch(`${config.ollamaBaseUrl}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: config.ollamaModel,
+          model: options.model || config.ollamaModel,
           messages,
           stream: false,
           options: { temperature: 0.7 },

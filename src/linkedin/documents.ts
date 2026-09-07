@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { apiRequest } from "./client.ts";
 import { requireAccessToken } from "../state/tokens.ts";
@@ -33,21 +32,16 @@ const MAX_PAGES = 300;
  */
 export async function uploadDocument(
   ownerUrn: string,
-  filePath: string,
+  name: string,
+  bytes: Uint8Array,
 ): Promise<string> {
-  const resolved = path.resolve(filePath);
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`Document not found: ${resolved}`);
-  }
-
-  const extension = path.extname(resolved).toLowerCase();
+  const extension = path.extname(name).toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(extension)) {
     throw new Error(
       `Unsupported document type "${extension}". This agent uploads PDFs only.`,
     );
   }
 
-  const bytes = fs.readFileSync(resolved);
   if (bytes.byteLength > MAX_BYTES) {
     throw new Error(
       `Document is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB; LinkedIn's limit is 100 MB.`,

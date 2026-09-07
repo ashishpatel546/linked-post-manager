@@ -129,6 +129,21 @@ export const DARK_THEME: PdfTheme = {
   accent: [0.549, 0.667, 0.961],
 };
 
+/** White page, LinkedIn blue accent — reads as a native LinkedIn document. */
+export const LIGHT_THEME: PdfTheme = {
+  background: [1, 1, 1],
+  heading: [0.09, 0.1, 0.12],
+  body: [0.24, 0.26, 0.3],
+  muted: [0.52, 0.55, 0.6],
+  accent: [0.039, 0.4, 0.761],
+};
+
+export type ThemeName = "dark" | "light";
+
+export function themeByName(name: string | undefined): PdfTheme {
+  return name === "light" ? LIGHT_THEME : DARK_THEME;
+}
+
 export type Slide = {
   /** Small uppercase label above the heading. */
   kicker?: string;
@@ -157,12 +172,56 @@ export const LAYOUT = {
   top: PAGE - MARGIN - 18,
   /** Text below this would collide with the footer row. */
   floor: MARGIN + 60,
+  /**
+   * The *smallest* body size, and the one pagination measures with — so a page
+   * packed at this size can only ever end up with room to spare, never overflow.
+   */
   bodySize: 21,
+  /**
+   * The largest. A slide carrying two short paragraphs was being typeset at the
+   * same 21pt as a full one, leaving two thirds of a 720pt page empty and
+   * reading as a blank slide. Type on a carousel is furniture: it should grow
+   * to fill the page it is on.
+   */
+  maxBodySize: 32,
+  /**
+   * Ceiling for a page carrying a single short paragraph. Some sections really
+   * are one sentence, and at 32pt one sentence still leaves half a page of
+   * nothing. Set as a statement it reads as a designed pause in the deck
+   * instead of a slide someone forgot to finish.
+   */
+  statementSize: 46,
   bodyLeading: 21 * 1.5,
   kickerDrop: 42,
   headingGap: 26,
   paragraphGap: 16,
 } as const;
+
+/** Leading and inter-paragraph space scale with the type, not with 21pt. */
+function leadingFor(size: number): number {
+  return size * 1.5;
+}
+function gapFor(size: number): number {
+  return size * 0.76;
+}
+
+/**
+ * List items arrive as paragraphs marked with a bullet. They are laid out with
+ * a hanging indent — wrapped lines align under the text, not under the bullet —
+ * which is the difference between a list and a paragraph that starts with a dot.
+ */
+const BULLET = "•";
+const BULLET_PATTERN = /^[-*•]\s+/;
+
+function paragraphLines(
+  text: string,
+  size: number,
+): { bullet: boolean; indent: number; lines: string[] } {
+  const bullet = BULLET_PATTERN.test(text);
+  const content = bullet ? text.replace(BULLET_PATTERN, "") : text;
+  const indent = bullet ? widthOf(`${BULLET}  `, size, "regular") : 0;
+  return { bullet, indent, lines: wrapText(content, size, "regular", CONTENT - indent) };
+}
 
 /**
  * Choose a heading size that fits in at most four lines, stepping down from the
@@ -181,14 +240,44 @@ export function layoutHeading(
   return { lines, size, height: lines.length * size * 1.16 + LAYOUT.headingGap };
 }
 
-/** Vertical space a set of paragraphs needs at body size. */
-export function measureBody(paragraphs: string[]): number {
+/** Vertical space a set of paragraphs needs, at a given body size. */
+export function measureBody(paragraphs: string[], size: number = LAYOUT.bodySize): number {
   let height = 0;
   for (const paragraph of paragraphs) {
-    const lines = wrapText(paragraph, LAYOUT.bodySize, "regular", CONTENT);
-    height += lines.length * LAYOUT.bodyLeading + LAYOUT.paragraphGap;
+    const { lines } = paragraphLines(paragraph, size);
+    height += lines.length * leadingFor(size) + gapFor(size);
   }
   return height;
+}
+
+/**
+ * The largest body size at which this page's text still fits the room it has.
+ * Pagination has already guaranteed it fits at `bodySize`, so this only ever
+ * scales up — a page can gain type, never lose it.
+ */
+export function fitBodySize(
+  paragraphs: string[],
+  room: number,
+  ceiling: number = LAYOUT.maxBodySize,
+): number {
+  let best: number = LAYOUT.bodySize;
+  for (let size = LAYOUT.bodySize + 1; size <= ceiling; size += 1) {
+    if (measureBody(paragraphs, size) > room) break;
+    best = size;
+  }
+  return best;
+}
+
+/**
+ * A page whose whole body is one short paragraph. Not a length check on the
+ * rendered height — a long single paragraph fills its page perfectly well; it
+ * is specifically the one-line section that needs different treatment.
+ */
+export function isStatement(paragraphs: string[]): boolean {
+  const [only] = paragraphs;
+  if (paragraphs.length !== 1 || only === undefined) return false;
+  if (BULLET_PATTERN.test(only)) return false;
+  return only.split(/\s+/).filter(Boolean).length <= 34;
 }
 
 function esc(text: string): string {
@@ -220,46 +309,152 @@ function textOp(
   ].join("\n");
 }
 
+function rectOp(x: number, y: number, w: number, h: number, rgb: Rgb): string {
+  return `${color(rgb)} rg ${x.toFixed(2)} ${y.toFixed(2)} ${w.toFixed(2)} ${h.toFixed(2)} re f`;
+}
+
+/** Four Bézier arcs; 0.5523 is the standard circle approximation constant. */
+function circleOp(cx: number, cy: number, r: number, rgb: Rgb): string {
+  const k = 0.5523 * r;
+  const f = (n: number) => n.toFixed(2);
+  return [
+    `${color(rgb)} rg`,
+    `${f(cx + r)} ${f(cy)} m`,
+    `${f(cx + r)} ${f(cy + k)} ${f(cx + k)} ${f(cy + r)} ${f(cx)} ${f(cy + r)} c`,
+    `${f(cx - k)} ${f(cy + r)} ${f(cx - r)} ${f(cy + k)} ${f(cx - r)} ${f(cy)} c`,
+    `${f(cx - r)} ${f(cy - k)} ${f(cx - k)} ${f(cy - r)} ${f(cx)} ${f(cy - r)} c`,
+    `${f(cx + k)} ${f(cy - r)} ${f(cx + r)} ${f(cy - k)} ${f(cx + r)} ${f(cy)} c`,
+    "f",
+  ].join("\n");
+}
+
+/** A dimmed accent for secondary marks, mixed toward the background. */
+function dim(theme: PdfTheme, amount = 0.55): Rgb {
+  const mix = (a: number, b: number) => a + (b - a) * amount;
+  return [
+    mix(theme.accent[0], theme.background[0]),
+    mix(theme.accent[1], theme.background[1]),
+    mix(theme.accent[2], theme.background[2]),
+  ];
+}
+
 /**
  * Lay out one slide. Text flows from the top down; the heading is sized to fit
  * the space actually left over after the body, so a dense page shrinks its
  * headline instead of colliding with the text below it.
+ *
+ * The furniture — accent bar on the cover, rule under a heading, progress dots,
+ * section number — is what separates "a PDF of text" from something that reads
+ * as designed. All of it is vector: rectangles and Bézier circles, so the file
+ * stays a few kilobytes and embeds no fonts or images.
  */
 function renderSlide(slide: Slide, theme: PdfTheme, pageNumber: number, total: number): string {
-  const ops: string[] = [`${color(theme.background)} rg`, `0 0 ${PAGE} ${PAGE} re f`];
+  const ops: string[] = [rectOp(0, 0, PAGE, PAGE, theme.background)];
+
+  // Cover and outro: a full-height accent bar down the left edge, and the
+  // heading sits lower so the page reads as a title card, not a text page.
+  if (slide.emphasis) {
+    ops.push(rectOp(0, 0, 14, PAGE, theme.accent));
+  }
+
+  // ---- measure, then draw -------------------------------------------------
+  // The size of the body type and where the block starts both depend on how
+  // much text there is, so nothing can be drawn until all of it is known.
+  const body = slide.body ?? [];
+  const kickerHeight = slide.kicker ? LAYOUT.kickerDrop : 0;
+  const headingHeight = slide.heading
+    ? layoutHeading(slide.heading, slide.emphasis ?? false).height
+    : 0;
+  const statement = isStatement(body);
+  const room = LAYOUT.top - LAYOUT.floor - kickerHeight - headingHeight;
+  const bodySize =
+    body.length > 0
+      ? fitBodySize(body, room, statement ? LAYOUT.statementSize : LAYOUT.maxBodySize)
+      : LAYOUT.bodySize;
+  const slack = body.length > 0 ? Math.max(0, room - measureBody(body, bodySize)) : 0;
 
   let y = PAGE - MARGIN - 18;
 
+  // Nudge a light page down rather than leaving all the air at the bottom.
+  // A statement page centres properly; an ordinary one only drifts a little,
+  // because a heading that floats to the middle stops looking like a heading.
+  if (body.length > 0) y -= statement ? slack * 0.45 : Math.min(slack * 0.4, 72);
+
   if (slide.kicker) {
-    ops.push(textOp(slide.kicker.toUpperCase(), MARGIN, y, 13, "bold", theme.muted, 2.2));
+    ops.push(textOp(slide.kicker.toUpperCase(), MARGIN, y, 13, "bold", theme.accent, 2.2));
     y -= 42;
+  }
+
+  // Section number, top right, on ordinary content pages only. Pages 2..n-1
+  // when there is an outro, 2..n otherwise.
+  if (!slide.emphasis && total > 1) {
+    const n = String(pageNumber - 1).padStart(2, "0");
+    const w = widthOf(n, 40, "bold");
+    ops.push(textOp(n, PAGE - MARGIN - w, PAGE - MARGIN - 40, 40, "bold", dim(theme, 0.7)));
   }
 
   if (slide.heading) {
     const { lines, size } = layoutHeading(slide.heading, slide.emphasis ?? false);
     const leading = size * 1.16;
+
+    // Title cards centre the heading block vertically so a short title does
+    // not float at the top of an otherwise empty page.
+    if (slide.emphasis && !slide.body?.length) {
+      const block = lines.length * leading;
+      y = PAGE / 2 + block / 2 + 10;
+    }
+
     for (const line of lines) {
       ops.push(
         textOp(line, MARGIN, y - size, size, "bold", slide.emphasis ? theme.accent : theme.heading),
       );
       y -= leading;
     }
-    y -= LAYOUT.headingGap;
+
+    // A short rule under a content heading anchors the eye; it is the single
+    // most effective mark for making a slide look intentional.
+    if (!slide.emphasis) {
+      y -= 8;
+      ops.push(rectOp(MARGIN, y, 56, 3, theme.accent));
+      y -= LAYOUT.headingGap - 8;
+    } else {
+      y -= LAYOUT.headingGap;
+    }
   }
 
   // Pagination guarantees this fits, so nothing is dropped here. If a caller
   // hands over more than a page holds, it runs past the floor visibly rather
   // than disappearing — a layout bug you can see beats one you cannot.
-  for (const paragraph of slide.body ?? []) {
-    for (const line of wrapText(paragraph, LAYOUT.bodySize, "regular", CONTENT)) {
-      ops.push(textOp(line, MARGIN, y - LAYOUT.bodySize, LAYOUT.bodySize, "regular", theme.body));
-      y -= LAYOUT.bodyLeading;
-    }
-    y -= LAYOUT.paragraphGap;
+  for (const paragraph of body) {
+    const { bullet, indent, lines } = paragraphLines(paragraph, bodySize);
+    lines.forEach((line, index) => {
+      if (bullet && index === 0) {
+        ops.push(textOp(BULLET, MARGIN, y - bodySize, bodySize, "regular", theme.accent));
+      }
+      // A statement is the page, so it carries the heading's weight of colour
+      // rather than body grey.
+      ops.push(
+        textOp(line, MARGIN + indent, y - bodySize, bodySize, "regular", statement ? theme.heading : theme.body),
+      );
+      y -= leadingFor(bodySize);
+    });
+    y -= gapFor(bodySize);
   }
 
+  // Footer row: note left, progress dots centre, page marker right.
   if (slide.footer) {
     ops.push(textOp(slide.footer, MARGIN, MARGIN, 15, "bold", theme.accent));
+  }
+
+  if (total > 1 && total <= 24) {
+    const gap = 12;
+    const r = 3.2;
+    const width = total * gap;
+    let x = PAGE / 2 - width / 2 + gap / 2;
+    for (let i = 1; i <= total; i += 1) {
+      ops.push(circleOp(x, MARGIN + 5, i === pageNumber ? r + 0.8 : r, i === pageNumber ? theme.accent : dim(theme)));
+      x += gap;
+    }
   }
 
   const marker = `${pageNumber} / ${total}`;

@@ -71,14 +71,37 @@ export const MAX_COMMENTARY_LENGTH = 3000;
  * Idempotent on purpose: a draft body that already carries the URL — because
  * the author wrote it in, or because the text was round-tripped — must not end
  * up with it twice.
+ *
+ * But idempotent used to mean "leave it entirely alone", and that froze the
+ * label: a draft written when LINKEDIN_PROFILE_LINK_LABEL was "More:" kept
+ * saying "More:" no matter what the variable was changed to afterwards,
+ * because the URL was already in the text. So a trailing sign-off line — a
+ * short label and the URL, nothing else — is restamped with the configured
+ * label. The URL anywhere else is the author's own sentence and is untouched.
  */
 export function withProfileLink(text: string, link: string, label: string): string {
   const url = link.trim();
   if (!url) return text;
-  if (text.includes(url)) return text;
 
   const suffix = label ? `${label} ${url}` : url;
-  const combined = `${text.trimEnd()}\n\n${suffix}`;
+  const body = text.trimEnd();
+  let combined: string;
+
+  if (body.includes(url)) {
+    const lines = body.split("\n");
+    const lastIndex = lines.length - 1;
+    const last = (lines[lastIndex] ?? "").trim();
+    const escaped = url.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // "<short label>: <url>", or the bare url, as the final line.
+    const signOff = new RegExp(`^(?:.{0,40}?:\\s*)?${escaped}$`);
+
+    if (!signOff.test(last)) return text;
+    if (last === suffix) return text;
+    lines[lastIndex] = suffix;
+    combined = lines.join("\n");
+  } else {
+    combined = `${body}\n\n${suffix}`;
+  }
 
   if ([...combined].length > MAX_COMMENTARY_LENGTH) {
     throw new Error(

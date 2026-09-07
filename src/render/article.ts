@@ -2,11 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { config } from "../config.ts";
 import {
-  DARK_THEME,
   LAYOUT,
   layoutHeading,
   measureBody,
   renderSlidesPdf,
+  themeByName,
   type Slide,
 } from "./pdf.ts";
 
@@ -36,16 +36,42 @@ function availableHeight(hasHeading: string | undefined, isFirst: boolean): numb
   return top - LAYOUT.floor;
 }
 
+/**
+ * Blocks become paragraphs — except a list, whose items become one paragraph
+ * each. Joining them was turning "- one\n- two\n- three" into a single run-on
+ * line reading "- one - two - three"; kept apart, the renderer can hang-indent
+ * them as an actual list.
+ */
+const LIST_ITEM = /^\s*(?:[-*•]|\d+[.)])\s+/;
+
 function splitParagraphs(chunk: string): string[] {
-  return chunk
-    .split(/\n\s*\n/)
-    .map((paragraph) => paragraph.replace(/\s*\n\s*/g, " ").trim())
-    .filter(Boolean);
+  const out: string[] = [];
+
+  for (const block of chunk.split(/\n\s*\n/)) {
+    const lines = block
+      .split(/\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length === 0) continue;
+
+    if (lines.every((line) => LIST_ITEM.test(line))) {
+      for (const line of lines) out.push(`• ${line.replace(LIST_ITEM, "")}`);
+      continue;
+    }
+
+    const joined = lines.join(" ").trim();
+    if (joined) out.push(joined);
+  }
+
+  return out;
 }
 
 /** Strip the markdown we allow in an article body but cannot typeset. */
 function plain(text: string): string {
   return text
+    // A heading level the slide splitter does not recognise (#### and deeper)
+    // would otherwise print its hashes on the page.
+    .replace(/^#{1,6}\s+/, "")
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/`(.+?)`/g, "$1")
     .replace(/\[(.+?)\]\((.+?)\)/g, "$1")
@@ -143,13 +169,14 @@ export function renderArticlePdf(input: {
   body: string;
   kicker?: string;
   closing?: string;
-}): { file: string; absolutePath: string; pages: number } {
+  /** "dark" | "light"; falls back to LINKEDIN_DECK_THEME, then dark. */
+  theme?: string;
+}): { file: string; bytes: Uint8Array; pages: number } {
   const slides = articleToSlides(input);
-  const bytes = renderSlidesPdf(slides, DARK_THEME);
+  const bytes = renderSlidesPdf(slides, themeByName(input.theme ?? config.deckTheme));
 
-  fs.mkdirSync(config.draftsDir, { recursive: true });
-  const absolutePath = path.join(config.draftsDir, `${input.id}.pdf`);
-  fs.writeFileSync(absolutePath, bytes);
-
-  return { file: `drafts/${input.id}.pdf`, absolutePath, pages: slides.length };
+  // Returns bytes rather than writing them: on a deployment the filesystem is
+  // read-only, and the caller is the one that knows which store the PDF belongs
+  // in. `file` is the storage key it should be written to.
+  return { file: `drafts/${input.id}.pdf`, bytes, pages: slides.length };
 }

@@ -18,9 +18,15 @@ import {
   getShareStatistics,
 } from "../linkedin/analytics.ts";
 import { publishPost, removePost } from "../core/publish.ts";
+import { fetchImageForImport, searchImages, searchWeb, suggestTopics } from "../core/research.ts";
 import { resolveAuthorUrn } from "../core/targets.ts";
+import { storage } from "../storage/index.ts";
 import {
   approveDraft,
+  archivePublishedDrafts,
+  deleteDraft,
+  ingestImage,
+  ingestImageBytes,
   listDrafts,
   publishDraft,
   readDraft,
@@ -103,8 +109,8 @@ register(
   "Check whether LinkedIn is authorized, which scopes were granted, and when the token expires. Start here when anything fails.",
   {},
   async () => ({
-    ...tokenStatus(),
-    publishedToday: countPublishedToday(),
+    ...(await tokenStatus()),
+    publishedToday: await countPublishedToday(),
     dailyLimit: config.dailyPostLimit,
     forceDryRun: config.forceDryRun,
     apiVersion: config.apiVersion,
@@ -161,6 +167,16 @@ register(
     id: z.string().optional().describe("Existing draft id to overwrite. Omit to create a new one."),
     visibility: z.enum(["PUBLIC", "CONNECTIONS", "LOGGED_IN"]).optional(),
     link: z.string().optional().describe("Optional URL to attach as a link preview."),
+    articleMode: z
+      .enum(["carousel", "text", "manual"])
+      .optional()
+      .describe(
+        "Articles only. 'carousel' (default) renders the prose to a PDF deck — no length limit. " +
+          "'text' posts the prose itself as a long text post with `images` attached, capped at 3000 characters like any post. " +
+          "'manual' is a full-length article for LinkedIn's own editor: it is never published by this tool — the Articles API " +
+          "is read-only — and exists to be written here and pasted into the editor by hand.",
+      ),
+    theme: z.enum(["dark", "light"]).optional().describe("Carousel colour scheme. Defaults to LINKEDIN_DECK_THEME."),
     images: z
       .array(z.string())
       .optional()
@@ -171,7 +187,7 @@ register(
       ),
   },
   async (args) => {
-    const draft = saveDraft({
+    const draft = await saveDraft({
       id: args.id,
       topic: args.topic,
       body: args.body,
@@ -179,6 +195,8 @@ register(
       format: args.format,
       articleTitle: args.articleTitle,
       article: args.article,
+      articleMode: args.articleMode,
+      theme: args.theme,
       visibility: args.visibility,
       link: args.link,
       images: args.images,
@@ -195,7 +213,7 @@ register(
 );
 
 register("linkedin_list_drafts", "List all drafts with their status.", {}, async () =>
-  listDrafts().map((draft) => ({
+  (await listDrafts()).map((draft) => ({
     id: draft.id,
     topic: draft.topic,
     target: draft.target,
@@ -218,9 +236,37 @@ register(
   "Mark a draft approved for publishing. Only call this after the user has read the text and explicitly said to go ahead. Editing the draft afterwards resets approval.",
   { id: z.string() },
   async (args) => ({
-    draft: approveDraft(args.id),
+    draft: await approveDraft(args.id),
     next: "Now call linkedin_publish_draft with confirm: true to post it.",
   }),
+);
+
+register(
+  "linkedin_delete_draft",
+  "Delete an unpublished draft and its article prose and rendered deck. Refuses to touch a published draft, since that record is the only full copy of what went out. Requires confirm: true.",
+  {
+    id: z.string(),
+    confirm: z.boolean().default(false).describe("Must be true to actually delete."),
+  },
+  async (args) => {
+    if (!args.confirm) {
+      const draft = await readDraft(args.id);
+      return {
+        deleted: false,
+        reason: "Not deleted: confirm was not set to true.",
+        wouldDelete: { id: draft.id, topic: draft.topic, status: draft.status },
+      };
+    }
+    const { deleted } = await deleteDraft(args.id);
+    return { deleted: true, files: deleted };
+  },
+);
+
+register(
+  "linkedin_archive_published_drafts",
+  "Move any draft still marked published out of drafts/ and into published/, taking its prose and deck with it. Idempotent. Use it to clear drafts that went out before archiving was automatic.",
+  {},
+  async () => archivePublishedDrafts(),
 );
 
 register(
@@ -295,7 +341,12 @@ register(
   },
   async (args) => {
     const owner = await resolveAuthorUrn(args.target);
-    return { imageUrn: await uploadImage(owner, args.filePath) };
+    // Ingested into storage first, so this works the same whether the bytes
+    // start on disk or already live in the store.
+    const key = await ingestImage(args.filePath);
+    const bytes = await storage.getBytes(key);
+    if (!bytes) throw new Error(`Could not read ${key} back after ingesting it.`);
+    return { imageUrn: await uploadImage(owner, key, bytes), storedAs: key };
   },
 );
 
@@ -371,6 +422,61 @@ register(
   },
 );
 
+// ---------------------------------------------------------------- research --
+
+register(
+  "linkedin_suggest_topics",
+  "Search the web around a seed phrase and propose post topics grounded in current results, each with an angle and the sources that support it. Needs BRAVE_API_KEY. Present the ideas to the user and let them pick; do not draft unprompted.",
+  {
+    seed: z.string().describe("A phrase or theme to explore, e.g. 'MCP servers context cost'."),
+    target: targetSchema,
+    count: z.number().int().min(3).max(10).default(6),
+    provider: z.string().optional(),
+    model: z.string().optional(),
+  },
+  async (args) => suggestTopics(args),
+);
+
+register(
+  "linkedin_research",
+  "Web search via Brave for facts to ground a draft. Pass the results you choose as `sources` to the draft so figures can be cited as [1], [2] instead of invented. Needs BRAVE_API_KEY.",
+  { query: z.string(), count: z.number().int().min(1).max(20).default(8) },
+  async (args) => ({ results: await searchWeb(args.query, args.count) }),
+);
+
+register(
+  "linkedin_search_images",
+  "Image search via Brave. Returns candidate images with their source pages. IMPORTANT: Brave provides no licence information — never attach one of these to a post without the user explicitly choosing it and confirming they have the rights. Needs BRAVE_API_KEY.",
+  { query: z.string(), count: z.number().int().min(1).max(30).default(12) },
+  async (args) => ({
+    results: await searchImages(args.query, args.count),
+    notice: "No licence data is available for these. The user must choose and confirm rights before import.",
+  }),
+);
+
+register(
+  "linkedin_import_image_url",
+  "Download one image the user has chosen into storage so it can be attached to a draft. Records the source URL beside the file. Only call this for an image the user explicitly picked and confirmed they may use. Requires confirm: true.",
+  {
+    url: z.string().describe("Direct image URL from linkedin_search_images (the `url` field)."),
+    page: z.string().optional().describe("The page it was found on (`page` field), kept as provenance."),
+    title: z.string().optional(),
+    confirm: z.boolean().default(false).describe("Must be true; the user has confirmed rights to use this image."),
+  },
+  async (args) => {
+    if (!args.confirm) {
+      return { imported: false, reason: "Not imported: confirm was not true. Ask the user to confirm they have rights to this image." };
+    }
+    const fetched = await fetchImageForImport(args.url);
+    const key = await ingestImageBytes(`${(args.title ?? "web-image").slice(0, 40)}${fetched.extension}`, fetched.bytes, {
+      sourceUrl: fetched.finalUrl,
+      pageUrl: args.page,
+      title: args.title,
+    });
+    return { imported: true, path: key, next: "Pass this path in `images` when saving the draft." };
+  },
+);
+
 // ------------------------------------------------------------------- audit --
 
 register(
@@ -378,9 +484,9 @@ register(
   "Recent write activity by this agent, including dry runs, with the URN of anything actually published.",
   { limit: z.number().int().min(1).max(200).default(25) },
   async (args) => ({
-    publishedToday: countPublishedToday(),
+    publishedToday: await countPublishedToday(),
     dailyLimit: config.dailyPostLimit,
-    entries: readAudit(args.limit),
+    entries: await readAudit(args.limit),
   }),
 );
 

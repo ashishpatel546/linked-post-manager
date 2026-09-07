@@ -17,7 +17,7 @@ export function buildAuthorizeUrl(state: string, includeOrg: boolean): string {
   return url.toString();
 }
 
-type TokenResponse = {
+export type TokenResponse = {
   access_token: string;
   expires_in: number;
   refresh_token?: string;
@@ -25,7 +25,13 @@ type TokenResponse = {
   scope?: string;
 };
 
-async function exchangeCode(code: string): Promise<TokenResponse> {
+/**
+ * Exported so the deployed sign-in reuses this exact exchange rather than
+ * growing a second copy: the redirect-uri mismatch hint below is the one that
+ * explains almost every failure here, and it should not exist in two places
+ * that can drift.
+ */
+export async function exchangeCode(code: string): Promise<TokenResponse> {
   const body = new URLSearchParams({
     grant_type: "authorization_code",
     code,
@@ -122,7 +128,7 @@ export function authorize(
             scope,
             obtainedAt: Date.now(),
           };
-          saveTokens(tokens);
+          await saveTokens(tokens);
 
           // Cache identity now so later publishes do not need a lookup.
           try {
@@ -132,7 +138,7 @@ export function authorize(
               memberUrn: memberUrn(info.sub),
               memberName: info.name,
             };
-            saveTokens(tokens);
+            await saveTokens(tokens);
           } catch {
             // Identity scope may not have been granted; publishing as the
             // company page still works.

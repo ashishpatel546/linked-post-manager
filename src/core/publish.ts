@@ -2,6 +2,7 @@ import { config, envFileValue, parseBool } from "../config.ts";
 import { appendAudit, assertUnderDailyLimit } from "../state/audit.ts";
 import { buildPostPayload, createPost, deletePost } from "../linkedin/posts.ts";
 import { withProfileLink } from "../linkedin/text.ts";
+import { assertNoPlaceholders, findPlaceholders } from "./placeholders.ts";
 import type { PostContent, Visibility } from "../linkedin/posts.ts";
 import {
   auditTarget,
@@ -32,6 +33,12 @@ export type PublishResult =
         characterCount: number;
         text: string;
         payload: Record<string, unknown>;
+        /**
+         * Unfilled markers the draft is asking the author to answer. Present in
+         * the preview so they are visible while there is still time to fix
+         * them; publishing with any of these is refused outright.
+         */
+        placeholders: string[];
       };
     }
   | {
@@ -101,7 +108,7 @@ export async function publishPost(input: PublishInput): Promise<PublishResult> {
       ? killSwitchReason()
       : "Not published: confirm was not set to true. Review the preview, then call again with confirm: true.";
 
-    appendAudit({
+    await appendAudit({
       ts: new Date().toISOString(),
       action: "publish",
       target: auditTarget(input.target),
@@ -121,11 +128,15 @@ export async function publishPost(input: PublishInput): Promise<PublishResult> {
         characterCount: [...text].length,
         text,
         payload,
+        placeholders: findPlaceholders(text),
       },
     };
   }
 
-  assertUnderDailyLimit();
+  // Placed at the choke point rather than in the UI, so the MCP tools, the web
+  // UI, and anything added later are all covered by the same gate.
+  assertNoPlaceholders(text);
+  await assertUnderDailyLimit();
 
   const { urn } = await createPost({
     authorUrn,
@@ -134,7 +145,9 @@ export async function publishPost(input: PublishInput): Promise<PublishResult> {
     content: input.content,
   });
 
-  appendAudit({
+  // Awaited before the result is returned: a caller must never be told a post
+  // succeeded while the record of it is still in flight.
+  await appendAudit({
     ts: new Date().toISOString(),
     action: "publish",
     target: auditTarget(input.target),
@@ -167,7 +180,7 @@ export async function removePost(input: {
   const authorUrn = await resolveAuthorUrn(input.target);
   await deletePost(input.postUrn);
 
-  appendAudit({
+  await appendAudit({
     ts: new Date().toISOString(),
     action: "delete",
     target: auditTarget(input.target),

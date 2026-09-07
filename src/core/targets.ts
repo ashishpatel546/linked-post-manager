@@ -19,14 +19,14 @@ export async function resolveAuthorUrn(target: Target): Promise<string> {
     return urn;
   }
 
-  const tokens = loadTokens();
+  const tokens = await loadTokens();
   if (tokens?.memberUrn) return tokens.memberUrn;
 
   // First use after auth, or a token file written before we cached the URN.
   const info = await getUserInfo();
   const urn = memberUrn(info.sub);
   if (tokens) {
-    saveTokens({ ...tokens, memberUrn: urn, memberName: info.name ?? tokens.memberName });
+    await saveTokens({ ...tokens, memberUrn: urn, memberName: info.name ?? tokens.memberName });
   }
   return urn;
 }

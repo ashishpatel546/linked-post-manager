@@ -2,6 +2,7 @@ import { config } from "../config.ts";
 import {
   ProviderError,
   type ChatMessage,
+  type CompleteOptions,
   type DraftProvider,
   type ProviderStatus,
 } from "./types.ts";
@@ -23,6 +24,9 @@ export const openaiProvider: DraftProvider = {
       configured: hasKey,
       ...(hasKey ? {} : { reason: "OPENAI_API_KEY is not set in .env." }),
       model: config.openaiModel,
+      // Not enumerated from /models: that lists hundreds, most of them not
+      // chat models. The configured one is offered; type any other into .env.
+      models: [config.openaiModel],
       endpoint: config.openaiBaseUrl,
       metered: true,
     };
@@ -49,7 +53,7 @@ export const openaiProvider: DraftProvider = {
     }
   },
 
-  async complete(messages: ChatMessage[]): Promise<string> {
+  async complete(messages: ChatMessage[], options: CompleteOptions = {}): Promise<string> {
     if (!config.openaiApiKey) {
       throw new ProviderError("openai", "OPENAI_API_KEY is not set in .env.");
     }
@@ -61,7 +65,7 @@ export const openaiProvider: DraftProvider = {
         Authorization: `Bearer ${config.openaiApiKey}`,
       },
       body: JSON.stringify({
-        model: config.openaiModel,
+        model: options.model || config.openaiModel,
         messages,
         temperature: 0.7,
       }),

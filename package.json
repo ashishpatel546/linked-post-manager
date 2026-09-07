@@ -12,9 +12,16 @@
     "whoami": "node src/scripts/whoami.ts",
     "providers": "node src/scripts/providers.ts",
     "mcp": "node src/mcp/server.ts",
+    "start": "node src/http/server.ts",
+    "ui": "node src/http/server.ts",
+    "ui:deployed": "node src/scripts/preview-deployed.ts",
+    "build": "node scripts/build-public.mjs",
+    "migrate:s3": "node src/scripts/migrate-storage.ts",
+    "audit:prune": "node src/scripts/prune-audit.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1127.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "dotenv": "^17.4.2",
     "zod": "^3.25.76"

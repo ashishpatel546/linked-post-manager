@@ -18,6 +18,16 @@ export type ProviderStatus = {
   metered: boolean;
   /** Populated only by an explicit reachability probe. */
   reachable?: boolean;
+  /**
+   * Models this provider can be asked for, when it can enumerate them. The UI
+   * offers these; `complete()` accepts any of them via `options.model`.
+   */
+  models?: string[];
+};
+
+export type CompleteOptions = {
+  /** Overrides the provider's configured default for this one call. */
+  model?: string;
 };
 
 export interface DraftProvider {
@@ -26,7 +36,7 @@ export interface DraftProvider {
   status(): ProviderStatus;
   /** Reachability check for the settings UI. Never throws. */
   probe(): Promise<ProviderStatus>;
-  complete(messages: ChatMessage[]): Promise<string>;
+  complete(messages: ChatMessage[], options?: CompleteOptions): Promise<string>;
 }
 
 export class ProviderError extends Error {

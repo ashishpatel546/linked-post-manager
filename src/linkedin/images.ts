@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import path from "node:path";
 import { apiRequest } from "./client.ts";
 import { requireAccessToken } from "../state/tokens.ts";
@@ -17,24 +16,24 @@ const ALLOWED_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif"]);
  * Two-step upload: register the image against an owner to get a signed URL,
  * then PUT the bytes there. The returned urn:li:image:... is what a post
  * references.
+ *
+ * Takes bytes rather than a path because the source is not always a local file
+ * — on a deployment the image is an object in a bucket, and there is no
+ * filesystem to read it from. `name` is used only for the type check and error
+ * messages.
  */
 export async function uploadImage(
   ownerUrn: string,
-  filePath: string,
+  name: string,
+  bytes: Uint8Array,
 ): Promise<string> {
-  const resolved = path.resolve(filePath);
-  if (!fs.existsSync(resolved)) {
-    throw new Error(`Image not found: ${resolved}`);
-  }
-
-  const extension = path.extname(resolved).toLowerCase();
+  const extension = path.extname(name).toLowerCase();
   if (!ALLOWED_EXTENSIONS.has(extension)) {
     throw new Error(
       `Unsupported image type "${extension}". LinkedIn accepts PNG, JPG, and GIF.`,
     );
   }
 
-  const bytes = fs.readFileSync(resolved);
   if (bytes.byteLength > 10 * 1024 * 1024) {
     throw new Error(
       `Image is ${(bytes.byteLength / 1024 / 1024).toFixed(1)} MB; keep uploads under 10 MB.`,

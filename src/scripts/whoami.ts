@@ -4,7 +4,7 @@ import { getAdministeredOrganizations, getUserInfo } from "../linkedin/me.ts";
 
 /** `npm run whoami` — the fastest check that Phase 0 and Phase 1 are done. */
 async function main(): Promise<void> {
-  const status = tokenStatus();
+  const status = await tokenStatus();
   console.log("Token");
   console.log(`  authorized: ${status.authorized}`);
   console.log(`  expires:    ${status.expiresAt ?? "—"} (${status.hint})`);

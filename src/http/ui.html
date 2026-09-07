@@ -1,0 +1,2930 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Postwright — LinkedIn post studio</title>
+<meta name="description" content="Write, design, preview and publish LinkedIn posts and article decks.">
+<link rel="manifest" href="/manifest.json">
+<link rel="icon" href="/icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<meta name="theme-color" content="#0a66c2">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<script>
+  /* Runs before the first paint, which is the whole reason it is up here and
+     not in the module at the bottom: a stored Light theme applied after parse
+     means the page paints dark and then flips, and that flash is more annoying
+     than no switch at all. Wrapped because a browser with site data blocked
+     throws on localStorage access. */
+  try {
+    var saved = localStorage.getItem("agentTheme");
+    if (saved === "light" || saved === "dark") {
+      document.documentElement.setAttribute("data-theme", saved);
+    }
+  } catch (e) {}
+</script>
+<style>
+  /* Reserves the scrollbar's width whether or not a scrollbar is showing, so
+     the right-hand gutter is the same on every page state and nothing ends up
+     tucked under it. */
+  html { scrollbar-gutter: stable; }
+
+  /* Dark is the base. Light is written out twice below — once for the system
+     preference, once for an explicit choice from the header switch — and the
+     two blocks must stay in sync. Duplicated deliberately: CSS cannot apply one
+     declaration block from two selectors, and the alternative (a --light-*
+     indirection layer) costs more to read than ten repeated lines.
+     `color-scheme` goes with them so the scrollbars, form controls and caret
+     the browser paints itself match the page instead of fighting it. */
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d12;
+    --panel: #14171f;
+    --panel-2: #1c202a;
+    --panel-3: #232833;
+    --line: #2a2f3a;
+    --line-soft: #21252e;
+    --text: #e6e9ef;
+    --muted: #8b93a3;
+    --accent: #4a9eff;
+    --accent-ink: #ffffff;
+    --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+    --ok: #3fb950;
+    --warn: #d29922;
+    --danger: #f85149;
+    --radius: 12px;
+    --radius-sm: 8px;
+    /* One gradient, used by the logo mark, the primary button and the section
+       rails, so the app reads as one thing rather than a page of controls. */
+    --brand: linear-gradient(135deg, #4a9eff 0%, #7c5cff 100%);
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    --shadow-lg: 0 24px 60px -20px rgba(0,0,0,.75);
+    /* Backdrop for the sticky header. Falls back to the flat panel colour
+       where backdrop-filter is unsupported. */
+    --veil: color-mix(in srgb, var(--panel) 82%, transparent);
+  }
+  /* "System" — the default, when no choice has been made or the switch is back
+     on System. :not([data-theme="dark"]) is what lets an explicit Dark win over
+     a light OS. */
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      color-scheme: light;
+      --bg: #f3f5f9; --panel: #ffffff; --panel-2: #f2f4f8; --panel-3: #e8ecf3;
+      --line: #dde2ea; --line-soft: #e9edf3;
+      --text: #10141b; --muted: #5b6472; --accent: #0a66c2;
+      --shadow: 0 1px 2px rgba(16,20,27,.06), 0 10px 24px -14px rgba(16,20,27,.25);
+      --shadow-lg: 0 28px 60px -24px rgba(16,20,27,.3);
+      --veil: color-mix(in srgb, #ffffff 82%, transparent);
+    }
+  }
+  /* An explicit Light, whatever the OS says. Same values as the block above. */
+  :root[data-theme="light"] {
+    color-scheme: light;
+    --bg: #f3f5f9; --panel: #ffffff; --panel-2: #f2f4f8; --panel-3: #e8ecf3;
+    --line: #dde2ea; --line-soft: #e9edf3;
+    --text: #10141b; --muted: #5b6472; --accent: #0a66c2;
+    --shadow: 0 1px 2px rgba(16,20,27,.06), 0 10px 24px -14px rgba(16,20,27,.25);
+    --shadow-lg: 0 28px 60px -24px rgba(16,20,27,.3);
+    --veil: color-mix(in srgb, #ffffff 82%, transparent);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+  }
+  * { box-sizing: border-box; }
+  /* The `hidden` attribute is only a UA rule setting display:none, so ANY
+     author rule with a display wins over it — `.actions { display: flex }` was
+     keeping "Render PDF preview" on screen in a format that has no deck, and
+     the same held for the empty picked-topic box and the image grid. Every
+     hidden element in this page is toggled by `.hidden = ...` in script, so
+     this has to outrank the lot. */
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif;
+    /* A wash of brand colour at the top so the page has a horizon instead of
+       starting flat. Fixed, so it does not travel with the scroll. */
+    background-image:
+      radial-gradient(900px 380px at 12% -12%, color-mix(in srgb, var(--accent) 13%, transparent), transparent 70%),
+      radial-gradient(700px 320px at 88% -18%, color-mix(in srgb, #7c5cff 11%, transparent), transparent 70%);
+    background-attachment: fixed; background-repeat: no-repeat;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 11px 20px; border-bottom: 1px solid var(--line);
+    background: var(--veil); backdrop-filter: blur(14px) saturate(140%);
+    /* Sticky because the dry-run state and the Publish button end up far apart
+       on a phone, and "am I live?" must be answerable without scrolling up. */
+    position: sticky; top: 0; z-index: 5;
+  }
+  /* ---- brand lockup -------------------------------------------------------
+     The mark, the name and what the thing is, in that order. `h1` keeps the
+     document outline honest; the tagline is a sibling so it can hide on a
+     phone without touching the heading. */
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .mark {
+    width: 30px; height: 30px; border-radius: 9px; flex: 0 0 30px;
+    background: var(--brand); display: grid; place-items: center;
+    box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  .mark svg { width: 17px; height: 17px; display: block; }
+
+  /* The deployed app before anyone has signed in. Not a panel inside the app —
+     it replaces it, because none of the app works without an identity. */
+  .signin {
+    max-width: 26rem; margin: 14vh auto; padding: 0 1.5rem; text-align: center;
+  }
+  .signin .mark { width: 46px; height: 46px; flex: none; border-radius: 14px; margin: 0 auto 18px; }
+  .signin .mark svg { width: 26px; height: 26px; }
+  .signin h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -.02em; }
+  .signin p { color: var(--muted); margin: 0 0 26px; font-size: 13px; }
+  .signin a.primary {
+    display: inline-block; text-decoration: none; padding: 11px 22px;
+    border-radius: var(--radius-sm); background: var(--brand); color: #fff;
+    font-weight: 600; box-shadow: var(--shadow);
+  }
+  .signin .note { display: block; margin-top: 18px; color: var(--muted); font-size: 12px; }
+  /* Why you are looking at this screen, when the answer is not "you have not
+     signed in yet" — access withdrawn, an unverified email. */
+  .signin .reason {
+    margin: 0 0 22px; padding: 11px 14px; text-align: left; font-size: 13px;
+    border-radius: var(--radius-sm); color: var(--text);
+    border: 1px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  header h1 {
+    font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -0.3px; line-height: 1.15;
+  }
+  .brand .tag {
+    display: block; font-size: 11px; color: var(--muted); font-weight: 400; letter-spacing: 0;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; padding: 4px 10px; border-radius: 99px;
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  /* The status dot: one glance tells you live vs dry vs signed-out, without
+     reading four labels. */
+  .chip::before {
+    content: ""; width: 6px; height: 6px; border-radius: 99px; flex: 0 0 6px;
+    background: currentColor; opacity: .85;
+  }
+  .chip.plain::before { display: none; }
+  .chip.live {
+    color: var(--danger); border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+    background: color-mix(in srgb, var(--danger) 12%, transparent);
+  }
+  /* Live is the one state worth a heartbeat: the next click publishes. */
+  .chip.live::before { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+  .chip.dry { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 50%, var(--line)); }
+  .chip.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+  .spacer { flex: 1; }
+  /* Transparent to the header's flex layout on wide screens — the chips sit in
+     the header row exactly as if this element were not here. */
+  .chips { display: contents; }
+  @media (max-width: 760px) { .chips { display: flex; gap: 7px; flex-wrap: wrap; } }
+
+  /* A sticky header that takes two tall rows costs a phone an eighth of its
+     screen for the whole session. Same information, less of it. */
+  @media (max-width: 760px) {
+    header { padding: 8px 14px; gap: 7px; }
+    /* Two rows, not three: the lockup and Refresh share the first, chips take
+       the second. Flex `order` does it without duplicating markup. */
+    .brand { flex: 1; order: 1; }
+    header h1 { font-size: 13px; }
+    /* The tagline is the first thing to go: the mark and the name already say
+       what this is once you have opened it twice. */
+    .brand .tag { display: none; }
+    header button { order: 2; min-height: 32px; padding: 5px 10px; font-size: 12px; }
+    .icon-button { padding: 0; width: 32px; flex: 0 0 32px; font-size: 13px; }
+    /* The wrapper becomes a real box only here, so the chips move as a group
+       to the second row instead of trailing after the button one at a time. */
+    .chips { order: 3; width: 100%; }
+    .chip { font-size: 11px; padding: 2px 7px; }
+    .spacer { display: none; }
+  }
+
+  /* 1400 so the composer stops growing before the measure gets unreadable on a
+     wide monitor, while the two columns still sit where they always did. */
+  main {
+    display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 20px;
+    padding: 20px; max-width: 1400px; margin: 0 auto;
+  }
+  /* 760, not 880: a portrait tablet at 820 has room for both columns, and
+     collapsing it there pushed the drafts list a full screen below the fold. */
+  /* minmax(0, 1fr), never bare 1fr: bare 1fr is minmax(auto, 1fr), whose
+     minimum is the widest child's min-content — and a <select>'s min-content
+     is its longest option label. One long model name widened the whole column
+     past the phone and put a horizontal scrollbar on the page. */
+  @media (max-width: 760px) { main { grid-template-columns: minmax(0, 1fr); padding: 14px; } }
+  select { min-width: 0; max-width: 100%; }
+
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 18px; margin-bottom: 16px; box-shadow: var(--shadow);
+    /* Sections arrive rather than appearing: the preview and result panels
+       unhide mid-interaction, and a hard pop reads as a glitch. */
+    animation: rise .22s ease both;
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(4px); } }
+  h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted);
+    margin: 0 0 14px; font-weight: 600; display: flex; align-items: center; gap: 8px;
+  }
+  /* A short brand rail on each section head — enough to group the page without
+     drawing a box around every heading. */
+  h2::before {
+    content: ""; width: 3px; height: 13px; border-radius: 2px; background: var(--brand); flex: 0 0 3px;
+  }
+  h2 .spacer { flex: 1; }
+  /* One line under a heading, in sentence case, saying what the section is
+     for. The uppercase label alone assumed you already knew. */
+  .lede { display: block; font-size: 12.5px; color: var(--muted); margin: -8px 0 14px; }
+
+  label { display: block; font-size: 12px; color: var(--muted); margin: 12px 0 5px; font-weight: 500; }
+  input[type=text], input[type=url], select, textarea {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 10px 12px;
+    font-family: inherit; outline: none;
+    transition: border-color .14s, box-shadow .14s, background .14s;
+    /* 16px, not inherited 14px: iOS Safari zooms the whole page when a focused
+       control's text is under 16px, and the zoom is not undone on blur. */
+    font-size: 16px;
+  }
+  input::placeholder, textarea::placeholder { color: color-mix(in srgb, var(--muted) 72%, transparent); }
+  input:hover, select:hover, textarea:hover { border-color: color-mix(in srgb, var(--accent) 35%, var(--line)); }
+  input:focus, select:focus, textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+    background: var(--panel);
+  }
+  /* Keyboard users get a visible ring on everything, not just text fields.
+     :focus-visible so a mouse click does not leave one behind. */
+  button:focus-visible, a:focus-visible, li:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  /* Grows with the viewport but never eats a whole phone screen. */
+  textarea { min-height: clamp(160px, 34vh, 300px); resize: vertical; line-height: 1.6; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+  /* 140 so two controls still sit side by side on a 375px phone (315px of
+     content after paddings); anything narrower wraps to two rows. */
+  .row > * { flex: 1; min-width: 140px; }
+
+  button {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: var(--radius-sm); padding: 9px 14px; font: inherit; font-weight: 500; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+    transition: border-color .14s, background .14s, transform .08s, box-shadow .14s;
+    /* Touch input gets 44px targets — a finger is not a mouse pointer, and
+       Publish sits next to Delete. */
+    min-height: 36px;
+  }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  /* Square, glyph only — it sits next to Refresh and should not compete with
+     it for width or attention. */
+  .icon-button { padding: 0; width: 36px; min-height: 36px; flex: 0 0 36px; font-size: 15px; line-height: 1; }
+  @media (pointer: coarse) { .icon-button { width: 44px; flex: 0 0 44px; } }
+  @media (pointer: coarse) {
+    button { min-height: 44px; padding: 11px 16px; }
+    ul.drafts li { padding: 12px 10px; }
+    .drop { padding: 20px; }
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); background: var(--panel-3); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary {
+    background: var(--brand); border-color: transparent; color: var(--accent-ink);
+    box-shadow: 0 4px 14px -6px color-mix(in srgb, var(--accent) 85%, transparent);
+  }
+  button.primary:hover:not(:disabled) {
+    background: var(--brand); filter: brightness(1.08);
+    box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 95%, transparent);
+  }
+  button.danger { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); color: var(--danger); }
+  button.danger:hover:not(:disabled) {
+    border-color: var(--danger); background: color-mix(in srgb, var(--danger) 12%, transparent);
+  }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+  /* The busy state, shown by guarded(). The spinner is a child element rather
+     than a pseudo-element so the button's own ::before icons can stay put. */
+  .spinner {
+    width: 13px; height: 13px; flex: 0 0 13px; border-radius: 99px;
+    border: 2px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-top-color: currentColor; animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Wraps rather than squeezing: with four formats, a 375px phone cannot fit
+     them on one row without clipping the labels, and "Article → LinkedIn
+     editor" does not survive being clipped. */
+  .targets { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* Choice cards, not toolbar buttons: two lines, left-aligned, so the
+     difference between "Carousel post" and "Long post" is legible before you
+     have read the paragraph underneath. */
+  .targets button {
+    flex: 1 1 150px; min-width: 0; flex-direction: column; align-items: flex-start;
+    gap: 2px; padding: 10px 12px; text-align: left; position: relative;
+  }
+  .targets button .sub {
+    font-size: 11px; font-weight: 400; color: var(--muted); line-height: 1.3;
+    overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap;
+  }
+  @media (max-width: 380px) { .targets button { font-size: 13px; padding: 9px 10px; } }
+  .targets button[aria-pressed=true] {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  .targets button[aria-pressed=true] .sub { color: color-mix(in srgb, var(--accent) 75%, var(--text)); }
+  /* A tick on the chosen card. Pseudo-element, so it is never an event target
+     and the click handlers keep receiving the button. */
+  .targets button[aria-pressed=true]::after {
+    content: "✓"; position: absolute; top: 7px; right: 9px;
+    font-size: 11px; color: var(--accent); font-weight: 700;
+  }
+
+  .meta { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .over { color: var(--danger); font-weight: 600; }
+  /* An edit that has not been saved is not an edit that will be published, so
+     the badge stops being quiet grey the moment the two disagree. */
+  #status-badge.warn { color: var(--warn); font-weight: 600; }
+  /* How close the text is to the cap, without having to read the number. Fills
+     amber past 90% and red past the limit — the same thresholds the count uses. */
+  .gauge { height: 3px; border-radius: 99px; background: var(--panel-3); overflow: hidden; margin-top: 8px; }
+  .gauge i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .18s ease, background .18s; }
+  .gauge.near i { background: var(--warn); }
+  .gauge.over i { background: var(--danger); }
+
+  .drop {
+    border: 1px dashed var(--line); border-radius: 7px; padding: 14px;
+    text-align: center; color: var(--muted); font-size: 12px; cursor: pointer;
+  }
+  .drop.hot { border-color: var(--accent); color: var(--accent); }
+  .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  /* Search results are a contact sheet, not a gallery: small tiles, as many as
+     fit across, scrolling in place rather than pushing the form down a screen. */
+  .tiles {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+    gap: 8px; margin-top: 10px; max-height: 320px; overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .tiles .thumb img { width: 100%; height: 84px; }
+  .thumb { position: relative; }
+  .thumb img { width: 62px; height: 62px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); display: block; }
+  .thumb button {
+    position: absolute; top: -6px; right: -6px; width: 20px; height: 20px; padding: 0;
+    border-radius: 99px; line-height: 1; font-size: 12px; background: var(--bg);
+  }
+
+  ul.drafts { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+  ul.drafts li {
+    padding: 9px 10px; border-radius: var(--radius-sm); cursor: pointer; border: 1px solid transparent;
+    transition: background .12s, border-color .12s;
+  }
+  ul.drafts li:hover { background: var(--panel-2); }
+  ul.drafts li[aria-current=true] {
+    border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); background: var(--accent-soft);
+  }
+  /* The one open draft, marked on the left edge so the list still reads as a
+     list rather than one highlighted block. */
+  ul.drafts li[aria-current=true] { position: relative; }
+  ul.drafts li[aria-current=true]::before {
+    content: ""; position: absolute; left: 0; top: 8px; bottom: 8px; width: 2px;
+    border-radius: 2px; background: var(--accent);
+  }
+  /* Empty states: a sentence saying what would be here and how to make one,
+     rather than a bare "Nothing yet." */
+  ul.drafts li.empty {
+    cursor: default; color: var(--muted); font-size: 12.5px; padding: 16px 12px;
+    border: 1px dashed var(--line); text-align: center; line-height: 1.5;
+  }
+  ul.drafts li.empty:hover { background: none; }
+  ul.drafts li.empty b { display: block; color: var(--text); font-weight: 550; margin-bottom: 2px; font-size: 13px; }
+  /* Placeholder rows while the first fetch is in flight, so the sidebar has a
+     shape before it has data. */
+  ul.drafts li.skel { padding: 0; cursor: default; }
+  ul.drafts li.skel:hover { background: none; }
+  .skel { display: grid; gap: 6px; }
+  .skel i {
+    display: block; height: 34px; border-radius: var(--radius-sm);
+    background: linear-gradient(90deg, var(--panel-2) 25%, var(--panel-3) 37%, var(--panel-2) 63%);
+    background-size: 400% 100%; animation: shimmer 1.4s ease infinite;
+  }
+  @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+  /* A title with no spaces — a pasted URL, a long hashtag — must break rather
+     than widen the list, or one bad draft puts a horizontal scrollbar on every
+     phone. */
+  ul.drafts li { min-width: 0; }
+  ul.drafts .t { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+  /* Discard, on the row itself. Reaching it used to mean opening the draft
+     first, which is backwards for the one action that means "I do not want to
+     look at this again". Dimmed until the row is touched, so a list of drafts
+     does not read as a row of delete buttons. */
+  ul.drafts li { position: relative; padding-right: 30px; }
+  .row-x {
+    position: absolute; top: 6px; right: 4px; width: 24px; height: 24px;
+    min-height: 0; padding: 0; line-height: 1; border-radius: 6px;
+    background: none; border: 1px solid transparent; color: var(--muted);
+    opacity: 0; transition: opacity .12s;
+  }
+  ul.drafts li:hover .row-x, .row-x:focus-visible { opacity: 1; }
+  .row-x:hover { color: var(--danger); border-color: var(--danger); }
+  /* Touch has no hover, so on a phone they are simply always visible. */
+  @media (pointer: coarse) { .row-x { opacity: .55; width: 30px; height: 30px; } }
+  ul.drafts .s { overflow-wrap: anywhere; }
+  ul.drafts .s { font-size: 11px; color: var(--muted); display: flex; gap: 6px; }
+  .dot { width: 7px; height: 7px; border-radius: 99px; display: inline-block; align-self: center; }
+  .dot.draft { background: var(--muted); }
+  .dot.approved { background: var(--warn); }
+  .dot.published { background: var(--ok); }
+
+  pre {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px;
+    padding: 12px; overflow-x: auto; font-size: 12px; margin: 0; white-space: pre-wrap;
+    word-break: break-word; max-height: 320px;
+  }
+  .note { display: block; font-size: 12px; color: var(--muted); margin-top: 6px; }
+  /* Sits above the format cards rather than under them: it is the frame for
+     the choice, not a footnote to it. */
+  #format-reality { margin: 0 0 8px; }
+  #format-reality b { color: var(--text); font-weight: 600; }
+  #asks {
+    margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+    border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 10%, transparent);
+    font-size: 13px;
+  }
+  #asks strong { display: block; margin-bottom: 8px; }
+  #asks .hint { display: block; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  #asks code {
+    display: inline-block; margin: 2px 6px 2px 0; padding: 2px 8px;
+    border-radius: 5px; background: var(--panel-2); border: 1px solid var(--line);
+    font-size: 12px; cursor: pointer;
+  }
+  #asks code:hover { border-color: var(--accent); }
+  .button-link {
+    display: inline-flex; align-items: center; padding: 9px 14px; min-height: 36px;
+    border: 1px solid var(--line); border-radius: 7px; text-decoration: none; color: var(--text);
+    background: var(--panel-2); font-weight: 500;
+  }
+  #install {
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+    margin: 0 20px; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+    border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  @media (max-width: 760px) { #install { margin: 0 14px; } }
+  #install .spacer { flex: 1; display: block; }
+  /* A suggestion list is worth reading through, but not worth losing the form
+     to: it scrolls in place, and the whole block folds away once a topic has
+     been picked. */
+  .panel-head {
+    display: flex; align-items: baseline; gap: 8px; margin: 14px 0 4px;
+    font-size: 12px; color: var(--muted);
+  }
+  .panel-head .spacer { flex: 1; display: block; }
+  button.link {
+    background: none; border: none; padding: 2px 4px; min-height: 0;
+    color: var(--accent); font-size: 12px; cursor: pointer;
+  }
+  button.link:hover { text-decoration: underline; }
+  .scroller { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+  .picked {
+    display: flex; gap: 8px; align-items: baseline; margin-top: 6px; padding: 8px 10px;
+    border: 1px solid var(--line); border-radius: 7px; background: var(--panel-2); font-size: 12px;
+  }
+  .picked .t { font-weight: 500; overflow-wrap: anywhere; }
+  .differs { display: block; margin-top: 3px; color: var(--accent); font-size: 11px; }
+
+  /* ---- post preview -------------------------------------------------------
+     Close enough to a LinkedIn card to answer "how will this look" — the same
+     truncation point, the same order of things — without pretending to be a
+     pixel copy of a page we do not control. */
+  .li-card {
+    border: 1px solid var(--line); border-radius: 10px; background: var(--panel-2);
+    padding: 14px; max-width: 560px;
+  }
+  .li-head { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .li-avatar {
+    width: 44px; height: 44px; border-radius: 99px; flex: 0 0 44px;
+    background: var(--accent); color: #fff; display: grid; place-items: center;
+    font-weight: 700; font-size: 15px;
+  }
+  .li-name { font-weight: 600; font-size: 14px; }
+  .li-sub { font-size: 11px; color: var(--muted); }
+  .li-text { font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .li-more { background: none; border: none; color: var(--muted); padding: 2px 0; min-height: 0; font-size: 14px; cursor: pointer; }
+  .li-media { display: grid; gap: 3px; margin-top: 10px; grid-template-columns: 1fr; }
+  .li-media.two { grid-template-columns: 1fr 1fr; }
+  .li-media.many { grid-template-columns: 1fr 1fr; }
+  .li-media.many > :first-child { grid-column: 1 / -1; }
+  .li-media img { width: 100%; height: 100%; max-height: 300px; object-fit: cover; display: block; border-radius: 4px; background: var(--panel); }
+  .li-doc { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .li-doc-head { padding: 10px 12px; font-size: 13px; font-weight: 600; background: var(--panel); }
+  .li-doc-head span { display: block; font-weight: 400; font-size: 11px; color: var(--muted); }
+  .li-doc iframe { width: 100%; height: min(52vh, 420px); border: 0; display: block; background: #111; }
+  .li-link {
+    margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px;
+    background: var(--panel); font-size: 12px; overflow-wrap: anywhere;
+  }
+  ul.files { list-style: none; margin: 10px 0 0; padding: 0; font-size: 12px; }
+  ul.files li {
+    display: flex; gap: 10px; align-items: baseline; padding: 5px 0;
+    border-bottom: 1px solid var(--line); color: var(--muted);
+  }
+  ul.files li:last-child { border-bottom: 0; }
+  ul.files .k { color: var(--text); overflow-wrap: anywhere; flex: 1; }
+  ul.files .tag {
+    font-size: 10px; text-transform: uppercase; letter-spacing: .5px;
+    border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
+  }
+  ul.files .shared { color: var(--warn); border-color: var(--warn); }
+
+  .li-actions {
+    display: flex; gap: 18px; margin-top: 12px; padding-top: 10px;
+    border-top: 1px solid var(--line); color: var(--muted); font-size: 12px;
+  }
+
+  /* The article preview: how it reads on an article page, which is a different
+     medium from the feed — wider measure, real headings, room to breathe. */
+  .li-article {
+    margin-top: 12px; padding: 22px; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--panel-2); max-width: 720px;
+    font-size: 15.5px; line-height: 1.68;
+  }
+  .li-article h1 { font-size: 27px; line-height: 1.25; margin: 0 0 18px; font-weight: 700; letter-spacing: -0.3px; }
+  .li-article h2 { font-size: 19px; margin: 26px 0 8px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--text); }
+  .li-article h3 { font-size: 16px; margin: 20px 0 6px; font-weight: 600; }
+  .li-article p { margin: 0 0 14px; }
+  .li-article ul { margin: 0 0 14px; padding-left: 22px; }
+  .li-article li { margin-bottom: 5px; }
+  .li-article a { overflow-wrap: anywhere; }
+  .li-article blockquote {
+    margin: 0 0 14px; padding-left: 14px; border-left: 3px solid var(--accent); color: var(--muted);
+  }
+  .li-article .marker { background: color-mix(in srgb, var(--warn) 22%, transparent); border-radius: 3px; padding: 0 3px; }
+
+  #toast {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; font-size: 13px; max-width: min(640px, calc(100vw - 32px));
+    box-shadow: var(--shadow-lg); display: none; z-index: 9; line-height: 1.5;
+    /* Sits above the phone's home indicator rather than under it. */
+    margin-bottom: env(safe-area-inset-bottom, 0px);
+    animation: toast-in .2s cubic-bezier(.2,.8,.3,1) both;
+    border-left-width: 3px;
+  }
+  @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } }
+  #toast.err { border-color: var(--danger); border-left-color: var(--danger); }
+  #toast.good { border-color: color-mix(in srgb, var(--ok) 50%, var(--line)); border-left-color: var(--ok); }
+  a { color: var(--accent); }
+
+  /* ---- footer -------------------------------------------------------------
+     Where the app is running and what the keyboard does. Small, at the end,
+     out of the way of the work. */
+  footer {
+    max-width: 1400px; margin: 0 auto; padding: 4px 20px 28px;
+    display: flex; gap: 8px 16px; flex-wrap: wrap; align-items: center;
+    font-size: 11.5px; color: var(--muted);
+  }
+  footer .spacer { flex: 1; }
+  kbd {
+    font: inherit; font-size: 10.5px; padding: 1px 5px; border-radius: 4px;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text);
+  }
+  @media (max-width: 760px) { footer { padding: 0 14px 24px; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round">
+        <path d="M4 6.5h9"/><path d="M4 12h6.5"/><path d="M4 17.5h5"/>
+        <path d="M19.6 4.4 12.4 11.6 11.3 15.6l4-1.1 7.2-7.2z" stroke-width="2" stroke-linejoin="round"/>
+      </svg>
+    </span>
+    <div style="min-width:0">
+      <h1>Postwright</h1>
+      <span class="tag">LinkedIn post studio · AppmeSoft</span>
+    </div>
+  </div>
+  <div class="chips">
+    <span class="chip" id="c-mode">…</span>
+    <span class="chip" id="c-who">…</span>
+    <span class="chip plain" id="c-quota">…</span>
+    <span class="chip plain" id="c-storage">…</span>
+  </div>
+  <span class="spacer"></span>
+  <button id="theme-switch" class="icon-button" title="Theme: system" aria-label="Theme: system">
+    <span id="theme-glyph" aria-hidden="true">◐</span>
+  </button>
+  <button id="refresh">Refresh</button>
+  <!-- Only on a deployment: there is nothing to sign out of locally. -->
+  <button id="signout" hidden>Sign out</button>
+</header>
+
+<div id="install" hidden style="margin-top:14px">
+  <span id="install-text"></span>
+  <span class="spacer"></span>
+  <button id="install-go" hidden>Install app</button>
+  <button id="install-dismiss">Not now</button>
+</div>
+
+<main>
+  <div>
+    <section>
+      <h2>Compose<span class="spacer"></span></h2>
+      <span class="lede">Two choices decide what the draft <em>is</em> — whose feed it lands in,
+        and what shape it takes. Everything below is how it reads.</span>
+
+      <label>Posting as</label>
+      <div class="targets">
+        <button data-target="me" aria-pressed="true">My profile
+          <span class="sub" id="t-me-sub">Your own timeline</span></button>
+        <button data-target="company" aria-pressed="false">Company page
+          <span class="sub" id="t-co-sub">Your organization</span></button>
+      </div>
+
+      <label>Format</label>
+      <!-- Said once, up front, because the names used to imply otherwise: three
+           of these four are posts. Only LinkedIn's own editor makes an Article,
+           and nothing can automate it. -->
+      <span class="note" id="format-reality">LinkedIn's API can only create
+        <b>posts</b>. A real Article — the page with its own URL — cannot be
+        published by any app, so the last option is written here and pasted into
+        LinkedIn by you.</span>
+      <div class="targets">
+        <button data-format="post" aria-pressed="true">Text post
+          <span class="sub">Up to 3,000 characters</span></button>
+        <button data-format="article-carousel" aria-pressed="false">Carousel post
+          <span class="sub">Post + swipeable PDF · no limit</span></button>
+        <button data-format="article-text" aria-pressed="false">Long post
+          <span class="sub">Same post, written long-form</span></button>
+        <button data-format="article-manual" aria-pressed="false">Article → LinkedIn editor
+          <span class="sub">Not published from here</span></button>
+      </div>
+      <span class="note" id="format-note">A plain text post, up to 3000 characters.</span>
+
+      <label for="topic">Topic</label>
+      <input type="text" id="topic" placeholder="What should the post be about?">
+
+      <div class="row">
+        <div>
+          <label for="provider">Provider</label>
+          <select id="provider"></select>
+        </div>
+        <div>
+          <label for="model">Model</label>
+          <select id="model"></select>
+        </div>
+        <div>
+          <label for="depth">Length</label>
+          <select id="depth">
+            <option value="brief">Brief</option>
+            <option value="standard" selected>Standard</option>
+            <option value="deep">In-depth</option>
+          </select>
+        </div>
+      </div>
+
+      <label for="instructions">Steer it (optional)</label>
+      <input type="text" id="instructions" placeholder="e.g. keep it short, mention the carousel, no hashtags">
+
+      <div class="actions">
+        <button class="primary" id="generate">Generate draft</button>
+        <button id="suggest">Suggest topics</button>
+        <button id="research">Find sources</button>
+      </div>
+
+      <div id="research-panel" hidden>
+        <div id="topics" hidden>
+          <div class="panel-head">
+            <span id="topics-label">Topic ideas</span>
+            <span class="spacer"></span>
+            <button class="link" id="topics-toggle">Hide</button>
+            <button class="link" id="topics-clear">Clear</button>
+          </div>
+          <span class="note" style="margin:0 0 6px">Written against the search results, not from them —
+            each idea is meant to go where the existing coverage does not. Click one to use it.</span>
+          <ul class="drafts scroller" id="topics-list"></ul>
+          <div class="picked" id="topics-picked" hidden>
+            <span style="color:var(--muted)">Using</span>
+            <span class="t"></span>
+            <span class="spacer" style="flex:1"></span>
+            <button class="link" id="topics-change">Change</button>
+          </div>
+        </div>
+        <div id="sources" hidden>
+          <div class="panel-head">
+            <span id="sources-label">Sources</span>
+            <span class="spacer"></span>
+            <button class="link" id="sources-toggle">Hide</button>
+            <button class="link" id="sources-clear">Clear</button>
+          </div>
+          <span class="note" style="margin:0 0 6px">Ticked ones are handed to the model; a figure must
+            trace to one of them or stay a [NUMBER] marker.</span>
+          <ul class="drafts scroller" id="sources-list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="article-panel" hidden>
+      <!-- One prose box, shared by the three long-form modes. Not called
+           "Article" any more: two of the three publish as posts. -->
+      <h2>Long-form text</h2>
+      <div id="deck-title-row">
+        <label for="articleTitle">Carousel title <span style="opacity:.7">— shown above the PDF</span></label>
+        <input type="text" id="articleTitle" placeholder="What LinkedIn shows as the headline">
+      </div>
+      <div class="row" id="theme-row">
+        <div style="flex:0 0 200px">
+          <label for="theme">Deck theme</label>
+          <select id="theme">
+            <option value="">default</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+          <span class="note" id="theme-note" style="margin-top:4px"></span>
+        </div>
+      </div>
+      <label for="article">Long-form prose
+        <span style="opacity:.7">— markdown headings (# ...) split the slides</span></label>
+      <textarea id="article" style="min-height:220px"
+        placeholder="# First slide heading&#10;&#10;A paragraph or two.&#10;&#10;# Second slide heading&#10;&#10;More prose."></textarea>
+      <div class="meta">
+        <span id="article-count"></span>
+        <span id="article-thin"></span>
+      </div>
+      <!-- Only appears when the prose is over the post cap, which can only
+           happen in long-text mode. Cutting is a job for the model that wrote
+           it, not a paragraph the author has to delete by hand. -->
+      <div class="actions" id="shorten-row" hidden>
+        <button id="shorten">Shorten to fit 3000</button>
+        <span class="note" style="margin:0;align-self:center">or switch to Carousel post, which has no limit</span>
+      </div>
+      <div class="actions" id="deck-actions">
+        <button id="render">Render PDF preview</button>
+        <a id="pdf-open" class="button-link" hidden target="_blank" rel="noreferrer">Open in new tab</a>
+      </div>
+
+      <!-- The handoff for the one format nothing can publish. Copy Formatted
+           puts HTML on the clipboard as well as text, so LinkedIn's editor
+           receives real headings and bold instead of literal "##" characters. -->
+      <div id="manual-actions" hidden>
+        <div class="actions">
+          <button class="primary" id="copy-rich">Copy for LinkedIn</button>
+          <button id="copy-md">Copy markdown</button>
+          <a class="button-link" href="https://www.linkedin.com/article/new/" target="_blank" rel="noreferrer">Open LinkedIn's editor</a>
+        </div>
+        <span class="note">Nothing publishes this one — LinkedIn's Articles API is
+          read-only, with no create endpoint. <strong>Copy for LinkedIn</strong> carries the
+          formatting across, so headings and bold survive the paste; the editor
+          adds its own cover image and title field.</span>
+        <div class="li-article" id="manual-preview"></div>
+      </div>
+      <!-- The deck is fetched with the auth header and shown from a blob URL,
+           because a plain <iframe src="/api/..."> cannot send that header. -->
+      <iframe id="pdf-frame" hidden title="Rendered deck" style="width:100%;height:min(70vh,640px);border:1px solid var(--line);border-radius:8px;margin-top:12px;background:#111"></iframe>
+    </section>
+
+    <section>
+      <h2 id="review-heading">Review</h2>
+      <span class="lede">Nothing leaves this machine until you press Publish — and nothing is
+        stored until you press Save.</span>
+      <label for="body" id="body-label" style="margin-top:0">Post text</label>
+      <textarea id="body" placeholder="Generated text lands here. Edit it freely — nothing is sent until you approve and publish."></textarea>
+      <div class="gauge" id="count-gauge"><i></i></div>
+      <div class="meta">
+        <span id="count">0 / 3000</span>
+        <span id="status-badge"></span>
+      </div>
+
+      <div id="asks" hidden>
+        <strong>The draft is asking you for these.</strong>
+        <div id="asks-list"></div>
+        <span class="hint">It left them blank rather than inventing numbers.
+          Replace each with a figure you can stand behind, or rewrite the
+          sentence so it does not need one. Publishing is blocked until they
+          are gone.</span>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="link">Link to attach (optional)</label>
+          <input type="url" id="link" placeholder="https://…">
+        </div>
+        <div style="flex:0 0 170px">
+          <label for="visibility">Visibility</label>
+          <select id="visibility">
+            <option>PUBLIC</option>
+            <option>CONNECTIONS</option>
+            <option>LOGGED_IN</option>
+          </select>
+        </div>
+      </div>
+
+      <label>Images <span style="opacity:.7">— replace a link if both are set</span></label>
+      <div class="drop" id="drop">Drop PNG / JPG / GIF here, or click to choose</div>
+      <input type="file" id="file" accept="image/png,image/jpeg,image/gif" multiple hidden>
+      <div class="thumbs" id="thumbs"></div>
+
+      <div class="row" style="margin-top:10px">
+        <div>
+          <label for="image-query">Or search the web — your topic is filled in already</label>
+          <input type="text" id="image-query" placeholder="e.g. server room, developer at desk">
+        </div>
+        <div style="flex:0 0 auto">
+          <label>&nbsp;</label>
+          <button id="image-search">Search images</button>
+        </div>
+      </div>
+      <div id="image-results" class="tiles" hidden></div>
+      <span class="note" id="image-notice" hidden></span>
+
+      <!-- Drawing the picture instead of finding one. No search result carries
+           a licence, and a made card is both safe to publish and on-brand. It
+           is drawn in the browser, so there is no renderer to install and it
+           works the same on a deployment. -->
+      <div class="panel-head" style="margin-top:16px">
+        <span>Or make one — no licence question, matches the deck</span>
+        <span class="spacer"></span>
+        <button class="link" id="studio-toggle">Design an image</button>
+      </div>
+      <div id="studio" hidden>
+        <div class="row">
+          <div>
+            <label for="card-eyebrow">Eyebrow</label>
+            <input type="text" id="card-eyebrow" placeholder="Small label above the line">
+          </div>
+          <div style="flex:0 0 150px">
+            <label for="card-theme">Theme</label>
+            <select id="card-theme">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+          <div style="flex:0 0 170px">
+            <label for="card-shape">Shape</label>
+            <select id="card-shape">
+              <option value="square">Square 1200×1200</option>
+              <option value="wide">Wide 1200×627</option>
+            </select>
+          </div>
+        </div>
+        <label for="card-headline">The line <span style="opacity:.7">— the one sentence worth putting on a card</span></label>
+        <textarea id="card-headline" style="min-height:90px" placeholder="Pulled from your post; edit it freely."></textarea>
+        <label for="card-footnote">Footnote</label>
+        <input type="text" id="card-footnote" placeholder="Your name, or where to find you">
+        <div class="actions">
+          <button id="card-write">Write the line with AI</button>
+          <button id="card-pull">Use my opening line</button>
+          <button id="card-attach" class="primary">Attach to post</button>
+        </div>
+        <canvas id="card-canvas" style="width:100%;max-width:420px;border:1px solid var(--line);border-radius:8px;margin-top:10px;display:block"></canvas>
+      </div>
+
+      <div class="actions">
+        <button id="save">Save draft</button>
+        <button id="preview">Preview post</button>
+        <button id="approve">Approve</button>
+        <button class="primary" id="publish">Publish</button>
+        <button class="danger" id="delete">Delete</button>
+      </div>
+      <span class="note" id="publish-note" hidden>Save keeps it here; publishing is
+        LinkedIn's editor, by hand — copy it from the Article panel above.</span>
+    </section>
+
+    <!-- What the post will look like in the feed: the text as the server will
+         actually send it (profile link appended, an article's prose flattened),
+         and the attachment that goes with it. -->
+    <section id="preview-panel" hidden>
+      <h2 id="preview-heading">How it will look</h2>
+      <div class="li-card">
+        <div class="li-head">
+          <div class="li-avatar" id="pv-avatar"></div>
+          <div style="min-width:0">
+            <div class="li-name" id="pv-name"></div>
+            <div class="li-sub" id="pv-sub"></div>
+          </div>
+        </div>
+        <div class="li-text" id="pv-text"></div>
+        <button class="li-more" id="pv-more" hidden>…see more</button>
+        <div id="pv-attach"></div>
+        <div class="li-actions"><span>Like</span><span>Comment</span><span>Repost</span><span>Send</span></div>
+      </div>
+      <span class="note" id="pv-note"></span>
+      <!-- What this post occupies in storage: the markdown record, the article
+           prose, the rendered deck, the images. Shown before offering to
+           delete any of it. -->
+      <ul class="files" id="pv-files" hidden></ul>
+      <div class="actions">
+        <button class="link" id="pv-payload">Show the raw API payload</button>
+        <a id="pv-live" class="button-link" hidden target="_blank" rel="noreferrer">View on LinkedIn</a>
+        <button class="danger" id="pv-forget" hidden>Delete the stored copy</button>
+      </div>
+    </section>
+
+    <section id="out-panel" hidden>
+      <h2>Result</h2>
+      <pre id="out"></pre>
+    </section>
+  </div>
+
+  <div>
+    <section>
+      <h2>Drafts<span class="spacer"></span><span class="chip plain" id="drafts-n" hidden></span></h2>
+      <ul class="drafts" id="drafts"><li class="skel"><i></i><i></i><i></i></li></ul>
+      <div class="actions">
+        <button id="new">New draft</button>
+        <button id="archive" hidden>Archive published</button>
+      </div>
+    </section>
+    <section>
+      <h2>Published</h2>
+      <ul class="drafts" id="published"><li class="skel"><i></i><i></i></li></ul>
+      <div class="actions">
+        <button id="published-more" hidden>Show older</button>
+      </div>
+    </section>
+    <section>
+      <h2>Recent activity</h2>
+      <ul class="drafts" id="audit"></ul>
+      <span class="note" style="margin-top:10px">New entries record real writes only —
+        previews and renders are no longer logged. Lines marked <em>dry run</em> are from
+        before that change.</span>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span id="foot-where">Running locally</span>
+  <span class="spacer"></span>
+  <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd> generate</span>
+  <span><kbd>Ctrl</kbd>+<kbd>S</kbd> save draft</span>
+</footer>
+
+<div id="toast"></div>
+
+<script type="module">
+// ---- token -----------------------------------------------------------------
+// Arrives once in the query string, then lives in sessionStorage so it is not
+// sitting in the address bar, in history, or in a referer header.
+// localStorage, not sessionStorage: installed as a PWA there is no tab to keep
+// a session alive, so a session-scoped token would mean pasting the URL in
+// again on every launch. Origin-isolated either way, and the server is on
+// loopback. Wrapped because a browser with site data blocked throws on access.
+function store(key, value) {
+  try {
+    if (value !== undefined) localStorage.setItem(key, value);
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+const url = new URL(location.href);
+const fromQuery = url.searchParams.get("token");
+if (fromQuery) {
+  store("agentToken", fromQuery);
+  url.searchParams.delete("token");
+  history.replaceState({}, "", url);
+}
+const TOKEN = fromQuery ?? store("agentToken") ?? "";
+
+if ("serviceWorker" in navigator) {
+  // Registered after load so it never competes with the first render.
+  addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Not fatal — the app works fine without offline shell caching.
+    });
+  });
+}
+
+// The install banner is wired at the bottom of this script: it needs `$` and
+// `toast`, which are declared below, and a module script that throws at top
+// level stops executing — one TDZ error here took the whole page down.
+
+const $ = (id) => document.getElementById(id);
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    ...options,
+    headers: {
+      "content-type": "application/json",
+      "x-agent-token": TOKEN,
+      ...(options.headers ?? {}),
+    },
+  });
+  const data = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}` }));
+  if (!res.ok) {
+    // A deployment answers an unauthenticated call with the way to fix it. The
+    // local server has no such route, so this only ever fires on a deployment
+    // and the laptop keeps its plain token error.
+    //
+    // 403 as well as 401: access withdrawn mid-session lands here, and being
+    // shown the sign-in screen with the reason is more use than an error toast
+    // on a page that will not work again.
+    if ((res.status === 401 || res.status === 403) && data.login) {
+      showSignIn(data.login, res.status === 403 ? data.error : null);
+      throw new Error(data.error ?? "Not signed in.");
+    }
+    throw new Error(data.error ?? `${res.status}`);
+  }
+  return data;
+}
+
+/**
+ * Replaces the app with a sign-in prompt. A page whose every panel is an error
+ * toast is worse than one that says the single thing to do — and the button is
+ * a plain link because signing in is a top-level navigation to LinkedIn, not a
+ * fetch.
+ */
+let signInShown = false;
+function showSignIn(loginPath, reason) {
+  if (signInShown) return;
+  signInShown = true;
+  document.body.innerHTML = `
+    <div class="signin">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle>
+        </svg>
+      </div>
+      <h1>Postwright</h1>
+      <p>LinkedIn post studio · AppmeSoft</p>
+      <div class="reason" id="signin-reason" hidden></div>
+      <a class="primary" id="signin-go">Sign in with LinkedIn</a>
+      <span class="note">The same sign-in authorizes posting, so there is no
+        second step. Only members on the allowlist can get in.</span>
+    </div>`;
+  document.getElementById("signin-go").href = loginPath;
+
+  // textContent, not innerHTML: the reason comes from the server and is shown
+  // verbatim, which is only safe if it cannot be markup.
+  if (reason) {
+    const box = document.getElementById("signin-reason");
+    box.textContent = reason;
+    box.hidden = false;
+  }
+}
+
+let toastTimer;
+function toast(message, kind = "") {
+  const el = $("toast");
+  // Gone once the sign-in screen has replaced the app. Several loaders are in
+  // flight when that happens and each wants to report its own 401, so this is
+  // the normal case rather than an odd one.
+  if (!el) return;
+  el.textContent = message;
+  el.className = kind;
+  el.style.display = "block";
+  // A second toast while the first is still up would otherwise change text in
+  // place with no sign anything happened. Reflow between the two assignments
+  // is what actually restarts the animation.
+  el.style.animation = "none";
+  void el.offsetWidth;
+  el.style.animation = "";
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.style.display = "none"; }, kind === "err" ? 9000 : 4500);
+}
+
+function show(value) {
+  $("out-panel").hidden = false;
+  $("out").textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+}
+
+// ---- state -----------------------------------------------------------------
+// `mode` is the UI's single choice — post, deck, or long text — while `format`
+// and `articleMode` are what the API takes. Keeping the pair derived from one
+// control is the whole point: the old dropdown-inside-a-panel was a second
+// place to say the same thing, and it was easy to miss entirely.
+const state = {
+  target: "me",
+  mode: "post",
+  format: "post",
+  articleMode: undefined,
+  id: null,
+  status: null,
+  images: [],
+  // JSON of the composer as it was last written to storage. Null means nothing
+  // has been saved, so everything on screen is unsaved. See dirty().
+  saved: null,
+};
+
+function setTarget(value) {
+  state.target = value;
+  for (const button of document.querySelectorAll("[data-target]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.target === value));
+  }
+  // Which account publishes is part of the draft, so switching it is an edit.
+  renderStatusBadge();
+}
+
+// Only the deck escapes the 3000-character post cap, so only the deck's labels
+// talk in slides. The other two are budgets against a ceiling the API enforces.
+const DEPTHS = {
+  post: {
+    brief: "Brief — ~500 characters",
+    standard: "Standard — ~900 characters",
+    deep: "In-depth — ~1800 characters",
+  },
+  "article-carousel": {
+    brief: "Brief — 4 to 6 slides",
+    standard: "Standard — 6 to 9 slides",
+    deep: "In-depth — 10 to 14 slides",
+  },
+  "article-text": {
+    brief: "Brief — ~1200 characters",
+    standard: "Standard — ~1900 characters",
+    deep: "In-depth — ~2500 of the 3000 allowed",
+  },
+  // The only format with no ceiling to work around, so the only one measured
+  // in words.
+  "article-manual": {
+    brief: "Brief — 600 to 800 words",
+    standard: "Standard — 1000 to 1400 words",
+    deep: "In-depth — 1800 to 2500 words",
+  },
+};
+
+function renderDepthOptions(mode) {
+  const labels = DEPTHS[mode] ?? DEPTHS.post;
+  for (const option of $("depth").options) {
+    option.textContent = labels[option.value] ?? option.value;
+  }
+}
+
+/**
+ * The button ids, and the stored draft fields they map onto.
+ *
+ * The labels on those buttons say "Carousel post" and "Long post" now, because
+ * calling them articles implied this app could publish a LinkedIn Article. The
+ * ids and the stored `format`/`articleMode` deliberately did NOT change: they
+ * are written into every draft file on disk and into the MCP tool arguments, so
+ * renaming them would strand drafts that already exist for a wording fix.
+ */
+const ARTICLE_MODES = {
+  "article-carousel": "carousel",
+  "article-text": "text",
+  "article-manual": "manual",
+};
+
+function setFormat(value) {
+  state.mode = value;
+  state.format = value === "post" ? "post" : "article";
+  state.articleMode = ARTICLE_MODES[value];
+
+  for (const button of document.querySelectorAll("[data-format]")) {
+    button.setAttribute("aria-pressed", String(button.dataset.format === value));
+  }
+
+  const isArticle = state.format === "article";
+  const isDeck = value === "article-carousel";
+  const isManual = value === "article-manual";
+  $("article-panel").hidden = !isArticle;
+  // A theme and a rendered PDF mean nothing when the prose is going out as
+  // text, so they are not offered there.
+  $("theme-row").hidden = !isDeck;
+  $("deck-actions").hidden = !isDeck;
+  if (!isDeck) { $("pdf-frame").hidden = true; $("pdf-open").hidden = true; }
+
+  // Nothing in this app publishes a manual article, so the buttons that would
+  // are not offered: an Approve that leads nowhere is worse than no Approve.
+  $("manual-actions").hidden = !isManual;
+  for (const id of ["preview", "approve", "publish"]) $(id).hidden = isManual;
+  $("publish-note").hidden = !isManual;
+  $("deck-title-row").hidden = isManual;
+  if (isManual) renderManualPreview();
+
+  // The formats use `body` for different things, and calling all of them "post
+  // text" is how the whole article ends up pasted into the commentary.
+  $("body-label").textContent = isDeck
+    ? "Post text above the carousel — the short text that makes someone swipe the PDF"
+    : value === "article-text"
+      ? "Not used in this format — the prose below is the post itself"
+      : isManual
+        ? "Optional — a note to yourself, or the post you will write to announce the article"
+        : "Post text";
+  // Each one leads with what actually lands in the feed, because that is the
+  // question the format names were getting wrong.
+  $("format-note").textContent = isManual
+    ? "Publishes nothing. A full-length LinkedIn Article, with no length limit — written and previewed here, then copied into LinkedIn's own editor by hand, because the Articles API is read-only and no app can create one."
+    : isDeck
+    ? "Goes out as a post with a document attached: the prose renders to a PDF that readers swipe through. The only format here with no length limit, since each section gets its own page."
+    : value === "article-text"
+      ? "Goes out as an ordinary post — the same thing Text post produces. The difference is how you write it: long-form with headings, which are flattened to their own lines at publish. Still capped at 3,000 characters, so for a longer piece use Carousel post."
+      : "Goes out as an ordinary post. Up to 3,000 characters, with your images attached.";
+
+  renderDepthOptions(value);
+  renderArticleMeta();
+  // The switch that started this: changing the format changes what publishes,
+  // and until it is saved the stored draft still says the old one.
+  renderStatusBadge();
+}
+
+// Mirrors core/placeholders.ts. Duplicated rather than fetched so the warning
+// appears as you type; the server-side gate remains the one that decides.
+const PLACEHOLDER = /\[[A-Z][A-Z0-9_-]{2,}(?:\s+[A-Z0-9_-]+)*(?::[^\]\n]{0,80})?\]/g;
+
+function renderCount() {
+  const text = $("body").value;
+  const n = [...text].length;
+  $("count").textContent = `${n} / 3000`;
+  $("count").className = n > 3000 ? "over" : "";
+
+  // The same number as a bar, so "am I near the cap" is answerable without
+  // reading it. Capped at 100% so an over-long draft fills rather than overflows.
+  const gauge = $("count-gauge");
+  gauge.firstElementChild.style.width = `${Math.min(100, (n / 3000) * 100)}%`;
+  gauge.className = "gauge" + (n > 3000 ? " over" : n > 2700 ? " near" : "");
+
+  renderAsks(text);
+}
+
+function renderAsks(text) {
+  const found = [...new Set(text.match(PLACEHOLDER) ?? [])];
+  $("asks").hidden = found.length === 0;
+  $("asks-list").innerHTML = "";
+
+  for (const marker of found) {
+    const code = document.createElement("code");
+    code.textContent = marker;
+    code.title = "Click to select it in the text";
+    // Selects the marker so the answer can be typed straight over it, rather
+    // than leaving the author to hunt for it in 3000 characters.
+    code.onclick = () => {
+      const at = $("body").value.indexOf(marker);
+      if (at === -1) return;
+      $("body").focus();
+      $("body").setSelectionRange(at, at + marker.length);
+    };
+    $("asks-list").append(code);
+  }
+
+  // Approving text with open questions in it is the step that let one reach
+  // the feed, so that is the step to block.
+  $("approve").disabled = found.length > 0;
+  $("publish").disabled = found.length > 0;
+}
+
+/** Mirrors core/drafts.ts articleAsPostText, for the counts and the preview. */
+function articleAsText(markdown) {
+  return markdown
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^#{1,3}\s+/, "").replace(/\*\*(.+?)\*\*/g, "$1"))
+    .join("\n")
+    .replace(/^\s*---\s*$/gm, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+/**
+ * Slide count and, more usefully, how many sections are too thin to fill a
+ * page. A section of two sentences renders as a mostly empty slide, and the
+ * moment to say so is while the prose is still in the box — not after the PDF
+ * has been rendered and read.
+ */
+function renderArticleMeta() {
+  const count = $("article-count");
+  const thin = $("article-thin");
+  if (state.format !== "article") {
+    count.textContent = "";
+    thin.textContent = "";
+    $("shorten-row").hidden = true;
+    return;
+  }
+
+  const text = $("article").value;
+  const sections = text.split(/^(?=#{1,3}\s)/m).map((s) => s.trim()).filter(Boolean);
+  const wordsIn = (section) =>
+    section.replace(/^#{1,3}\s+.*/, "").split(/\s+/).filter(Boolean).length;
+  const total = text.split(/\s+/).filter(Boolean).length;
+
+  // The manual article answers to nothing but its own length, so that is all
+  // it reports — words, and how long they take to read.
+  if (state.articleMode === "manual") {
+    renderManualPreview();
+    $("shorten-row").hidden = true;
+    count.className = "";
+    count.textContent = total
+      ? `${total} words · about ${Math.max(1, Math.round(total / 225))} min read · no length limit`
+      : "";
+    thin.textContent = "";
+    thin.className = "";
+    return;
+  }
+
+  if (state.articleMode === "text") {
+    const characters = [...articleAsText(text)].length;
+    const over = characters > 3000;
+    count.textContent = `${characters} / 3000 characters as a post`;
+    count.className = over ? "over" : "";
+    thin.textContent = over ? `${characters - 3000} over the API's limit` : "";
+    thin.className = over ? "over" : "";
+    $("shorten-row").hidden = !over;
+    return;
+  }
+
+  $("shorten-row").hidden = true;
+  count.className = "";
+  count.textContent = sections.length
+    ? `${sections.length} sections · ${total} words`
+    : "";
+
+  const sparse = sections.filter((s) => wordsIn(s) < 45).length;
+  thin.textContent = sparse
+    ? `${sparse} section${sparse > 1 ? "s" : ""} under 45 words — those pages will render light`
+    : "";
+  thin.className = sparse ? "over" : "";
+}
+
+function renderStatusBadge() {
+  const map = { draft: "unapproved", approved: "approved — ready to publish", published: "published" };
+  const badge = $("status-badge");
+  if (!state.id) { badge.textContent = "unsaved"; badge.classList.remove("warn"); return; }
+
+  // "Unsaved changes" outranks the status, because it is the one that decides
+  // what would actually go out: publishing sends the stored draft, not this
+  // screen. Said here so it is visible while writing, not only at the click.
+  const unsaved = dirty();
+  badge.textContent = `${state.id} · ${unsaved ? "unsaved changes" : map[state.status] ?? state.status}`;
+  badge.classList.toggle("warn", unsaved);
+}
+
+// Stored images are served by /api/asset, which needs the token header — so a
+// plain <img src="/api/asset?…"> cannot fetch them. They are pulled as blobs
+// once and kept: the same picture is usually on screen twice, in the thumbnail
+// strip and in the preview card.
+const assetUrls = new Map();
+
+async function assetUrl(key) {
+  const cached = assetUrls.get(key);
+  if (cached) return cached;
+  const res = await fetch(`/api/asset?key=${encodeURIComponent(key)}`, {
+    headers: { "x-agent-token": TOKEN },
+  });
+  if (!res.ok) throw new Error(`Could not load ${key}`);
+  const objectUrl = URL.createObjectURL(await res.blob());
+  assetUrls.set(key, objectUrl);
+  return objectUrl;
+}
+
+/** Sets an <img> from storage, leaving it blank rather than broken on failure. */
+function paintAsset(img, key) {
+  assetUrl(key).then(
+    (src) => { img.src = src; },
+    () => { img.alt = `${key} (could not be loaded)`; },
+  );
+}
+
+function renderThumbs() {
+  // Attaching or removing a picture is an edit too, and every path that changes
+  // state.images redraws the thumbs — so this is the one place that catches all
+  // of them.
+  renderStatusBadge();
+  $("thumbs").innerHTML = "";
+  state.images.forEach((key, index) => {
+    const wrap = document.createElement("div");
+    wrap.className = "thumb";
+    wrap.innerHTML = `<img alt="" loading="lazy"><button title="Remove">×</button>`;
+    const img = wrap.querySelector("img");
+    img.alt = key;
+    // The first image is the one LinkedIn shows largest, so it is worth
+    // knowing which one it is before publishing.
+    img.title = index === 0 && state.images.length > 1 ? `${key}\n(shown first)` : key;
+    if (index === 0 && state.images.length > 1) img.style.outline = "2px solid var(--accent)";
+    paintAsset(img, key);
+    wrap.querySelector("button").onclick = () => {
+      state.images.splice(index, 1);
+      renderThumbs();
+    };
+    $("thumbs").append(wrap);
+  });
+  if (state.images.length) {
+    const note = document.createElement("div");
+    note.style.cssText = "font-size:11px;color:var(--muted);width:100%";
+    note.textContent =
+      state.images.length > 1
+        ? `${state.images.length} images — the outlined one appears first`
+        : state.images[0];
+    $("thumbs").append(note);
+  }
+}
+
+// ---- loading ---------------------------------------------------------------
+async function loadStatus() {
+  const s = await api("/api/status");
+  // Kept for the card designer's footnote and the preview's author line.
+  state.memberName = s.memberName ?? null;
+  state.companyName = s.organizationName ?? null;
+
+  // Whose feed, by name. "My profile" and "Company page" are the choice; the
+  // names underneath are the answer to "which account is this actually signed
+  // in as", which used to need the header chip and some arithmetic.
+  if (s.memberName) $("t-me-sub").textContent = s.memberName;
+  if (s.organizationName) $("t-co-sub").textContent = s.organizationName;
+
+  // Where this instance keeps things, said once at the bottom rather than
+  // inferred from the chip.
+  $("foot-where").textContent =
+    (s.storageBackend === "s3" ? "Storage: your S3 bucket" : "Storage: local files") +
+    ` · API ${s.apiVersion ?? ""}`.trimEnd();
+
+  // The theme is a per-draft choice, but choosing it once and having it stick
+  // is what "configurable from the UI" means in practice — so the picker also
+  // acts as your default for new drafts, and says what .env would otherwise
+  // have decided.
+  const remembered = store("agentDeckTheme");
+  $("theme").options[0].textContent = `default (${s.deckTheme ?? "dark"})`;
+  if (remembered && !state.id) $("theme").value = remembered;
+  $("theme-note").textContent = remembered
+    ? "Remembered on this device for new drafts."
+    : `Unset drafts use LINKEDIN_DECK_THEME (${s.deckTheme ?? "dark"}).`;
+
+  // Where drafts are actually being written. Worth saying out loud: S3 settings
+  // in .env do nothing while the backend is local.
+  const where = $("c-storage");
+  where.textContent = s.storageBackend === "s3" ? "S3" : "local files";
+  where.title =
+    s.storageBackend === "s3"
+      ? "Drafts, tokens and images are objects in your bucket."
+      : "Drafts are files under the project directory. Any S3 settings in .env are inert until STORAGE_BACKEND=s3.";
+  const mode = $("c-mode");
+  mode.textContent = s.forceDryRun ? "dry run — nothing is sent" : "LIVE — posts go out";
+  mode.className = "chip " + (s.forceDryRun ? "dry" : "live");
+
+  const who = $("c-who");
+  who.textContent = s.authorized ? `${s.memberName ?? "authorized"} · ${s.daysRemaining}d left` : "not authorized";
+  who.className = "chip " + (s.authorized && !s.expired ? "ok" : "dry");
+
+  $("c-quota").textContent = `${s.publishedToday}/${s.dailyLimit} today`;
+
+  // On a deployment the header says who you are signed in as and offers the way
+  // out. Locally there is no session to end, so neither appears.
+  $("signout").hidden = s.authMode !== "oauth";
+  if (s.signedInAs) who.title = `Signed in as ${s.signedInAs}`;
+
+  return s;
+}
+
+let PROVIDER_STATUS = [];
+
+// Fills the model picker for whichever provider is selected. Ollama lists what
+// is installed, Claude Code offers its aliases, OpenAI offers the configured
+// model — and "provider default" is always first, so choosing nothing is still
+// a valid choice rather than an accident.
+function renderModels(preferredModel) {
+  const p = PROVIDER_STATUS.find((s) => s.id === $("provider").value);
+  const select = $("model");
+  select.innerHTML = "";
+  const def = document.createElement("option");
+  def.value = "";
+  def.textContent = `default (${p?.model ?? "…"})`;
+  select.append(def);
+  for (const m of p?.models ?? []) {
+    const option = document.createElement("option");
+    option.value = m;
+    option.textContent = m;
+    select.append(option);
+  }
+  if (preferredModel && [...select.options].some((o) => o.value === preferredModel)) {
+    select.value = preferredModel;
+  }
+}
+
+async function loadProviders(preferred) {
+  const { providers, current } = await api("/api/providers");
+  PROVIDER_STATUS = providers;
+  const select = $("provider");
+  select.innerHTML = "";
+  for (const p of providers) {
+    // `configured` means it has what it needs; `reachable` is set only by an
+    // explicit probe, so treat "not probed" as fine and only a definite false
+    // as a failure.
+    const usable = p.configured && p.reachable !== false;
+    const option = document.createElement("option");
+    option.value = p.id;
+    // A <select> truncates rather than wraps, and the parenthetical in the
+    // label ("Claude Code (subscription)") pushed the model name out of view —
+    // which is the half that tells you what you are about to write with.
+    const name = p.label.replace(/\s*\(.*\)\s*$/, "");
+    option.textContent = usable
+      ? `${name} — ${p.model}${p.metered ? " · metered" : " · free"}`
+      : `${name} — unavailable`;
+    option.disabled = !usable;
+    option.title = usable ? p.endpoint : (p.reason ?? "unavailable");
+    select.append(option);
+  }
+  const wanted = preferred ?? current;
+  if ([...select.options].some((o) => o.value === wanted && !o.disabled)) select.value = wanted;
+  else {
+    const first = [...select.options].find((o) => !o.disabled);
+    if (first) select.value = first.value;
+    else toast("No draft provider is usable. Run `npm run providers` to see why.", "err");
+  }
+  renderModels(store("agentModel") ?? undefined);
+}
+
+$("provider").addEventListener("change", () => renderModels());
+$("model").addEventListener("change", () => store("agentModel", $("model").value));
+
+async function loadDrafts() {
+  const { drafts } = await api("/api/drafts");
+  const list = $("drafts");
+  list.innerHTML = "";
+
+  const badge = $("drafts-n");
+  badge.hidden = drafts.length === 0;
+  badge.textContent = String(drafts.length);
+
+  if (drafts.length === 0) {
+    list.innerHTML =
+      `<li class="empty"><b>No drafts yet</b>Give it a topic above and press
+       Generate. Nothing is stored here until you press Save.</li>`;
+    $("archive").hidden = true;
+    return;
+  }
+  for (const d of drafts) {
+    const li = document.createElement("li");
+    li.setAttribute("aria-current", String(d.id === state.id));
+    li.innerHTML = `<div class="t"></div>
+      <div class="s"><span class="dot ${d.status}"></span><span></span></div>`;
+    li.querySelector(".t").textContent = d.topic || d.id;
+    // Counted here rather than served: /api/drafts returns the draft as stored,
+    // and the character count is a view concern. Spread, not .length, so an
+    // emoji counts as the one character LinkedIn will count it as.
+    const characters = [...(d.body ?? "")].length;
+    const where = d.target === "company" ? "company" : "profile";
+    // The same four names as the format cards. A list that calls a draft
+    // "article" when the card that made it says "Carousel post" is a third
+    // vocabulary to learn.
+    const kind =
+      d.format !== "article"
+        ? "text post"
+        : d.articleMode === "manual"
+          ? "article · for the editor"
+          : d.articleMode === "text"
+            ? "long post"
+            : "carousel post";
+    // A manual article's post body is empty by design, so "0 chars" would be
+    // reporting the wrong number for it rather than a small one.
+    const size = d.articleMode === "manual" ? "copy-paste" : `${characters} chars`;
+    li.querySelector(".s span:last-child").textContent =
+      `${d.status} · ${where} · ${kind} · ${size}`;
+    li.onclick = () => openDraft(d.id);
+
+    const discard = document.createElement("button");
+    discard.className = "row-x";
+    discard.textContent = "×";
+    discard.title = `Discard "${d.topic || d.id}"`;
+    discard.setAttribute("aria-label", discard.title);
+    discard.onclick = (event) => {
+      // Without this the click also opens the draft being discarded.
+      event.stopPropagation();
+      discardDraft(d);
+    };
+    li.append(discard);
+
+    list.append(li);
+  }
+
+  // Only offered when there is actually residue to clear, so it does not sit
+  // there as a button whose purpose you have to guess.
+  $("archive").hidden = !drafts.some((d) => d.status === "published");
+}
+
+// Newest 25, with the rest a click away. The list is a way back to your posts,
+// not an archive to fetch in full every time the page opens — each record is a
+// separate object, so "show everything" means one request per post.
+const PUBLISHED_PAGE = 25;
+
+async function loadPublished(cursor) {
+  const query = `?limit=${PUBLISHED_PAGE}${cursor ? `&before=${encodeURIComponent(cursor)}` : ""}`;
+  const { published, nextCursor } = await api(`/api/published${query}`);
+  const list = $("published");
+  if (!cursor) list.innerHTML = "";
+
+  const more = $("published-more");
+  more.hidden = !nextCursor;
+  more.onclick = (event) => guarded(event.target, "Loading…", () => loadPublished(nextCursor));
+
+  if (published.length === 0 && !cursor) {
+    list.innerHTML =
+      `<li class="empty"><b>Nothing published yet</b>Posts you send land here,
+       newest first, each one a link back to it on LinkedIn.</li>`;
+    return;
+  }
+  for (const p of published) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="t"></div>
+      <div class="s"><span class="dot published"></span><span></span></div>`;
+    li.querySelector(".t").textContent = p.topic || p.id;
+    li.title = "Read what went out";
+    li.onclick = () => reviewPublished(p.id);
+
+    const when = p.publishedAt ? new Date(p.publishedAt).toLocaleDateString() : "";
+    const meta = li.querySelector(".s span:last-child");
+    if (p.publishedUrn) {
+      // Straight to the live post, so checking what went out is one click and
+      // not a hunt through the feed.
+      const a = document.createElement("a");
+      a.href = `https://www.linkedin.com/feed/update/${p.publishedUrn}/`;
+      a.target = "_blank";
+      a.rel = "noreferrer";
+      a.textContent = `${when} · view on LinkedIn`;
+      // The row opens the local copy; only this link leaves for LinkedIn.
+      a.onclick = (event) => event.stopPropagation();
+      meta.append(a);
+    } else {
+      meta.textContent = when;
+    }
+    list.append(li);
+  }
+}
+
+/**
+ * Read back what actually went out. Worth having because it cannot be got any
+ * other way: the audit log keeps 120 characters, and a personal post cannot be
+ * fetched from the API — r_member_social is a permission LinkedIn does not
+ * grant — so this stored record is the only full copy of the text.
+ */
+async function reviewPublished(id) {
+  const record = await api(`/api/published/${encodeURIComponent(id)}`);
+  const isDeck = record.format === "article" && record.articleMode !== "text";
+  const text = record.articleMode === "text" && record.article
+    ? articleAsText(record.article)
+    : record.body;
+
+  lastPreview = null;
+  $("preview-heading").textContent = "What went out";
+  $("preview-panel").hidden = false;
+  $("pv-name").textContent =
+    record.target === "company" ? state.companyName ?? "Company page" : state.memberName ?? "You";
+  $("pv-avatar").textContent = ($("pv-name").textContent.match(/\b[a-z]/gi) ?? ["?"]).slice(0, 2).join("").toUpperCase();
+  $("pv-sub").textContent = `${record.target === "company" ? "Company page" : "Personal profile"} · published ${
+    record.publishedAt ? new Date(record.publishedAt).toLocaleString() : "—"
+  }`;
+
+  // Shown whole: this is a record, not a draft, and folding it would hide the
+  // part you came back to check. When only the pointer was kept, say so rather
+  // than showing an empty card.
+  $("pv-text").textContent = record.textKept === false
+    ? "The text was not kept here — the post itself is on LinkedIn. Open it below."
+    : text ?? "";
+  $("pv-text").style.color = record.textKept === false ? "var(--muted)" : "";
+  $("pv-more").hidden = true;
+
+  if (isDeck && record.textKept !== false) {
+    // The deck is served from published/ by the same route once archived.
+    await showDeck(id).catch(() => {});
+    renderAttachment({ kind: "document", title: record.articleTitle ?? record.topic });
+  } else if ((record.images ?? []).length) {
+    renderAttachment({ kind: "images", images: record.images });
+  } else if (record.link) {
+    renderAttachment({ kind: "link", url: record.link });
+  } else {
+    renderAttachment({ kind: "none" });
+  }
+
+  $("pv-note").textContent = record.textKept === false
+    ? `${record.publishedUrn ?? "no URN recorded"} · only the pointer is stored (LINKEDIN_KEEP_PUBLISHED=stub)`
+    : `${[...(text ?? "")].length} characters · ${record.publishedUrn ?? "no URN recorded"}`;
+  $("pv-payload").hidden = true;
+  renderStoredFiles(record.files ?? []);
+
+  const live = $("pv-live");
+  live.hidden = !record.publishedUrn;
+  if (record.publishedUrn) live.href = `https://www.linkedin.com/feed/update/${record.publishedUrn}/`;
+
+  const forget = $("pv-forget");
+  forget.hidden = false;
+  forget.onclick = () => forgetPublished(record);
+
+  $("preview-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+const KIND_LABEL = { record: "markdown", prose: "markdown", deck: "pdf", image: "image" };
+
+function sizeOf(bytes) {
+  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024
+    ? `${(bytes / 1024).toFixed(1)} KB`
+    : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function renderStoredFiles(files) {
+  const list = $("pv-files");
+  list.innerHTML = "";
+  list.hidden = files.length === 0;
+
+  for (const file of files) {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="tag"></span><span class="k"></span><span></span>`;
+    li.querySelector(".tag").textContent = KIND_LABEL[file.kind] ?? file.kind;
+    li.querySelector(".k").textContent = file.key;
+    li.querySelector("span:last-child").textContent = sizeOf(file.bytes);
+    if (file.shared) {
+      const tag = document.createElement("span");
+      tag.className = "tag shared";
+      tag.textContent = "used elsewhere";
+      tag.title = "Another draft or post attaches this same file, so it is kept.";
+      li.append(tag);
+    }
+    list.append(li);
+  }
+}
+
+async function forgetPublished(record) {
+  const name = record.topic || record.id;
+  if (!confirm(
+    `Delete the stored copy of "${name}"?\n\n` +
+      "The post stays live on LinkedIn — this only removes it from here.\n\n" +
+      "It is the only full copy of the text: the audit log keeps 120 characters, and a personal post cannot be read back from LinkedIn's API. Once deleted, the words exist only on LinkedIn.",
+  )) return;
+
+  try {
+    const result = await api(`/api/published/${encodeURIComponent(record.id)}`, { method: "DELETE" });
+    $("preview-panel").hidden = true;
+    toast(`Removed ${result.deleted.length} stored file(s). The post is still live on LinkedIn.`);
+    await loadPublished();
+  } catch (error) {
+    toast(error.message, "err");
+  }
+}
+
+async function loadAudit() {
+  const { entries } = await api("/api/audit?limit=8");
+  const list = $("audit");
+  list.innerHTML = "";
+  if (entries.length === 0) {
+    list.innerHTML = `<li class="empty"><b>Nothing has gone out</b>Publishes and deletions are recorded here.</li>`;
+    return;
+  }
+  for (const e of entries.slice().reverse()) {
+    const li = document.createElement("li");
+    li.style.cursor = "default";
+    li.innerHTML = `<div class="s"></div><div class="t" style="font-size:12px;font-weight:400"></div>`;
+    li.querySelector(".s").textContent =
+      `${new Date(e.ts).toLocaleString()} · ${e.dryRun ? "dry run" : e.action}`;
+    li.querySelector(".t").textContent = e.summary ?? "";
+    list.append(li);
+  }
+}
+
+async function openDraft(id) {
+  const d = await api(`/api/drafts/${encodeURIComponent(id)}`);
+  state.id = d.id;
+  state.status = d.status;
+  state.images = d.images ?? [];
+  setTarget(d.target);
+  setFormat(
+    d.format !== "article"
+      ? "post"
+      : d.articleMode === "text"
+        ? "article-text"
+        : d.articleMode === "manual"
+          ? "article-manual"
+          : "article-carousel",
+  );
+  $("topic").value = d.topic ?? "";
+  if (!$("image-query").dataset.touched) $("image-query").value = d.topic ?? "";
+  $("body").value = d.body ?? "";
+  $("link").value = d.link ?? "";
+  $("articleTitle").value = d.articleTitle ?? "";
+  $("theme").value = d.theme ?? "";
+  $("visibility").value = d.visibility ?? "PUBLIC";
+
+  // The prose lives in a companion object, not in the draft record, so fetch it
+  // separately rather than showing an empty box on an article that has one.
+  $("article").value = d.format === "article" ? await api(`/api/drafts/${encodeURIComponent(id)}/article`).then((r) => r.article).catch(() => "") : "";
+
+  // A different draft's preview is not this draft's preview.
+  $("preview-panel").hidden = true;
+  lastPreview = null;
+
+  // Just loaded from storage, so screen and disk agree. Taken after every box
+  // is filled, the prose included, or opening a draft would look edited.
+  state.saved = JSON.stringify(composerPayload());
+
+  renderCount(); renderStatusBadge(); renderThumbs(); renderArticleMeta();
+  await loadDrafts();
+}
+
+// ---- actions ---------------------------------------------------------------
+async function guarded(button, label, fn) {
+  // innerHTML rather than textContent, so a button that carries a spinner (or
+  // any markup) comes back exactly as it was. Labels are page constants, never
+  // anything a person or the network supplied.
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.innerHTML = `<span class="spinner"></span>${escapeHtml(label)}`;
+  try { await fn(); }
+  catch (error) { toast(error.message, "err"); show(error.message); }
+  finally {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.innerHTML = original;
+    // Re-apply the placeholder gate: blanket re-enabling here would otherwise
+    // hand back the Approve button the gate had just taken away.
+    renderAsks($("body").value);
+  }
+}
+
+$("generate").onclick = (event) => guarded(event.target, "Writing…", async () => {
+  const topic = $("topic").value.trim();
+  if (!topic) { toast("Give it a topic first.", "err"); return; }
+  const result = await api("/api/compose", {
+    method: "POST",
+    body: JSON.stringify({
+      topic,
+      target: state.target,
+      format: state.format,
+      articleMode: state.articleMode,
+      provider: $("provider").value,
+      model: $("model").value || undefined,
+      depth: $("depth").value,
+      instructions: $("instructions").value.trim() || undefined,
+      sources: selectedSources(),
+    }),
+  });
+
+  if (state.format === "article") {
+    $("article").value = result.article;
+    // Long text mode writes no commentary — the prose is the post — so an
+    // existing one is left alone rather than blanked.
+    if (result.commentary) $("body").value = result.commentary;
+    if (!$("articleTitle").value.trim()) $("articleTitle").value = topic;
+  } else {
+    $("body").value = result.text;
+  }
+  // A regenerated body is not the text that was approved, so drop the link to
+  // the saved draft until it is saved again.
+  state.status = "draft";
+  renderCount(); renderStatusBadge(); renderArticleMeta();
+  if (state.format !== "article") {
+    toast(`Drafted with ${result.provider} — ${result.characterCount} characters. Read it before approving.`);
+  } else if (state.articleMode === "manual") {
+    const words = result.article.split(/\s+/).filter(Boolean).length;
+    toast(`${words}-word article written with ${result.provider}. Read it, then copy it into LinkedIn's editor.`);
+  } else if (state.articleMode === "text") {
+    const characters = [...articleAsText(result.article)].length;
+    toast(
+      characters > 3000
+        ? `Drafted with ${result.provider}, but at ${characters} characters it is over the 3000 the API allows. Shorten it, or switch to Carousel post.`
+        : `Drafted with ${result.provider} — ${characters} of 3000 characters. Read it before approving.`,
+      characters > 3000 ? "err" : "",
+    );
+  } else {
+    toast(`Drafted with ${result.provider}. Read the prose, then render the deck before approving.`);
+  }
+});
+
+/**
+ * Everything the composer holds, in the shape the API takes. Built in one place
+ * so that what gets saved and what gets compared against the saved copy cannot
+ * drift apart: `dirty()` below stringifies this, so a field added here is
+ * covered by the unsaved-changes check for free.
+ */
+function composerPayload() {
+  return {
+    topic: $("topic").value.trim() || "untitled",
+    body: $("body").value,
+    target: state.target,
+    format: state.format,
+    articleTitle: $("articleTitle").value.trim() || undefined,
+    article: state.format === "article" ? $("article").value : undefined,
+    articleMode: state.articleMode,
+    theme: $("theme").value || undefined,
+    visibility: $("visibility").value,
+    link: $("link").value.trim() || undefined,
+    images: state.images,
+  };
+}
+
+/**
+ * Whether the composer says something different from the draft on disk.
+ *
+ * Publishing reads the stored draft, never the boxes on screen, so an edit that
+ * was never saved is an edit that never goes out. This is the check that says
+ * so — before, a format switched after the first save was silently dropped and
+ * the old text went to LinkedIn instead.
+ */
+function dirty() {
+  return state.saved !== JSON.stringify(composerPayload());
+}
+
+async function saveDraft() {
+  const payload = composerPayload();
+  const saved = await api("/api/drafts", {
+    method: "POST",
+    body: JSON.stringify({ id: state.id ?? undefined, ...payload }),
+  });
+  state.id = saved.id;
+  state.status = saved.status;
+  state.saved = JSON.stringify(payload);
+
+  // An image that was attached and has since gone from the store is dropped by
+  // the server rather than failing the save. Mirror that here, and say so —
+  // a picture that quietly stops being attached is worse than an error.
+  if (saved.droppedImages?.length) {
+    state.images = saved.images ?? [];
+    // Re-taken after the reconciliation, or the composer would count as edited
+    // the instant it was saved and every publish would be refused.
+    state.saved = JSON.stringify(composerPayload());
+    renderThumbs();
+    toast(
+      `${saved.droppedImages.length} image(s) are no longer in storage and were removed from this draft: ${saved.droppedImages.join(", ")}`,
+      "err",
+    );
+  }
+
+  renderStatusBadge();
+  await loadDrafts();
+  return saved;
+}
+
+$("save").onclick = (event) => guarded(event.target, "Saving…", async () => {
+  const saved = await saveDraft();
+  toast(`Saved drafts/${saved.id}.md — approval reset, as any edit does.`);
+});
+
+// LinkedIn folds a post after roughly this much and hides the rest behind
+// "…see more". Worth seeing, because it decides whether the hook survives.
+const FOLD = 210;
+let lastPreview = null;
+
+$("preview").onclick = (event) => guarded(event.target, "Rendering…", async () => {
+  const result = await api("/api/preview", {
+    method: "POST",
+    body: JSON.stringify({
+      target: state.target,
+      text: $("body").value,
+      format: state.format,
+      articleMode: state.articleMode,
+      article: state.format === "article" ? $("article").value : undefined,
+      articleTitle: $("articleTitle").value.trim() || undefined,
+      topic: $("topic").value.trim() || undefined,
+      visibility: $("visibility").value,
+      link: $("link").value.trim() || undefined,
+      images: state.images,
+    }),
+  });
+  lastPreview = result;
+  renderPreview(result);
+  toast("Nothing was sent — this is the text and attachment that would go out.");
+});
+
+$("pv-payload").onclick = () => { if (lastPreview) show(lastPreview.preview?.payload ?? lastPreview); };
+
+function renderPreview(result) {
+  const preview = result.preview ?? {};
+  const text = preview.text ?? "";
+  const author = result.author ?? { name: "You", kind: state.target };
+
+  // The same card doubles as the record of a published post, so put it back
+  // into "this has not gone out yet" mode.
+  $("preview-heading").textContent = "How it will look";
+  $("pv-live").hidden = true;
+  $("pv-forget").hidden = true;
+  $("pv-payload").hidden = false;
+
+  $("preview-panel").hidden = false;
+  $("pv-name").textContent = author.name;
+  $("pv-avatar").textContent = (author.name.match(/\b[a-z]/gi) ?? ["?"]).slice(0, 2).join("").toUpperCase();
+  $("pv-sub").textContent =
+    `${author.kind === "company" ? "Company page" : "Personal profile"} · now · ${$("visibility").value === "PUBLIC" ? "Anyone" : $("visibility").value === "CONNECTIONS" ? "Connections" : "Signed-in members"}`;
+
+  // Folded exactly where LinkedIn folds it, and unfoldable, so both halves of
+  // the question — "does the hook land" and "does the whole thing read" — are
+  // answerable from the same card.
+  const body = $("pv-text");
+  const more = $("pv-more");
+  const long = text.length > FOLD;
+  const paint = (expanded) => {
+    body.textContent = expanded || !long ? text : `${text.slice(0, FOLD).trimEnd()}…`;
+    more.textContent = expanded ? "see less" : "…see more";
+  };
+  more.hidden = !long;
+  paint(false);
+  more.onclick = () => paint(more.textContent === "…see more");
+
+  renderAttachment(result.attachment ?? { kind: "none" });
+
+  const notes = [`${preview.characterCount ?? text.length} characters`];
+  if ((preview.placeholders ?? []).length) {
+    notes.push(`${preview.placeholders.length} unanswered marker(s) — publishing is blocked until they are gone`);
+  }
+  if (state.format === "article" && state.articleMode === "text") {
+    notes.push("the prose is the post here; the commentary box is not used");
+  }
+  $("pv-note").textContent = notes.join(" · ");
+}
+
+function renderAttachment(attachment) {
+  const box = $("pv-attach");
+  box.innerHTML = "";
+
+  if (attachment.kind === "images") {
+    const grid = document.createElement("div");
+    grid.className = `li-media ${attachment.images.length === 2 ? "two" : attachment.images.length > 2 ? "many" : ""}`;
+    for (const key of attachment.images) {
+      const img = document.createElement("img");
+      img.alt = key;
+      paintAsset(img, key);
+      grid.append(img);
+    }
+    box.append(grid);
+    return;
+  }
+
+  if (attachment.kind === "document") {
+    const card = document.createElement("div");
+    card.className = "li-doc";
+    card.innerHTML = `<div class="li-doc-head"></div>`;
+    card.querySelector(".li-doc-head").textContent = attachment.title;
+
+    if (deckUrl) {
+      // The very PDF that was rendered, in the card where it will appear.
+      const frame = document.createElement("iframe");
+      frame.title = "Deck preview";
+      frame.src = `${deckUrl}#toolbar=0&navpanes=0&view=FitH`;
+      card.append(frame);
+    } else {
+      const hint = document.createElement("div");
+      hint.className = "li-doc-head";
+      hint.innerHTML = `<span>Render the deck to see the pages here.</span>`;
+      card.append(hint);
+    }
+    box.append(card);
+    return;
+  }
+
+  if (attachment.kind === "link") {
+    const card = document.createElement("div");
+    card.className = "li-link";
+    card.textContent = attachment.url;
+    box.append(card);
+  }
+}
+
+$("approve").onclick = (event) => guarded(event.target, "Approving…", async () => {
+  // Unconditionally, not just for a draft that has no id yet. Approving reads
+  // the stored draft, so approving without saving first approved a different
+  // post from the one on screen — switch the format after the first save and
+  // the deck was never written; the old plain post was what went out.
+  if (!state.id || dirty()) await saveDraft();
+  const result = await api(`/api/drafts/${encodeURIComponent(state.id)}/approve`, { method: "POST" });
+  state.status = result.draft.status;
+  renderStatusBadge();
+  await loadDrafts();
+  toast("Approved. Publishing is still a separate, explicit step.");
+});
+
+$("publish").onclick = (event) => guarded(event.target, "Publishing…", async () => {
+  if (!state.id) { toast("Save and approve the draft first.", "err"); return; }
+
+  // Refused rather than silently publishing the stored version: what publishes
+  // is the draft on disk, and an edit made after approving is not in it. Saving
+  // here instead would be worse — it would drop the approval and publish text
+  // nobody had read as approved.
+  if (dirty()) {
+    toast("You have edited this since it was approved, and publishing sends the approved version, not what is on screen. Approve again to include these changes.", "err");
+    return;
+  }
+
+  const where = state.target === "company" ? "your COMPANY PAGE" : "your personal profile";
+  const what = state.format !== "article"
+    ? "an ordinary post"
+    : state.articleMode === "text"
+      ? "an ordinary post — the prose itself, headings flattened"
+      : "a post with the PDF carousel attached, and the post text above it";
+  if (!confirm(`Publish to ${where}?\n\nIt goes out as ${what}.\n\nThis is public and cannot be undone quietly.`)) return;
+
+  const result = await api(`/api/drafts/${encodeURIComponent(state.id)}/publish`, {
+    method: "POST",
+    body: JSON.stringify({ confirm: true }),
+  });
+  show(result);
+  if (result.published) {
+    state.status = "published";
+    toast(`Published: ${result.postUrl}`, "good");
+  } else {
+    toast(result.reason, "err");
+  }
+  renderStatusBadge();
+  await Promise.all([loadDrafts(), loadPublished(), loadAudit(), loadStatus()]);
+});
+
+// ---- research ---------------------------------------------------------------
+// state.sources holds every result seen; checked ones are what Generate sends.
+state.sources = [];
+state.pickedTopic = null;
+
+function selectedSources() {
+  const picked = state.sources.filter((s) => s.checked).map(({ title, url, description }) => ({ title, url, description }));
+  return picked.length ? picked : undefined;
+}
+
+// A long list of ideas is worth having and not worth staring at once you have
+// chosen one. Both blocks fold, remember it, and can be cleared outright.
+function collapse(section, hidden) {
+  $(`${section}-list`).hidden = hidden;
+  $(`${section}-toggle`).textContent = hidden ? "Show" : "Hide";
+  if (section === "topics") $("topics-picked").hidden = !hidden || !state.pickedTopic;
+}
+
+$("topics-toggle").onclick = () => collapse("topics", !$("topics-list").hidden);
+$("sources-toggle").onclick = () => collapse("sources", !$("sources-list").hidden);
+$("topics-change").onclick = () => collapse("topics", false);
+
+$("topics-clear").onclick = () => {
+  $("topics-list").innerHTML = "";
+  state.pickedTopic = null;
+  $("topics").hidden = true;
+  $("topics-picked").hidden = true;
+  $("research-panel").hidden = $("sources").hidden;
+};
+
+$("sources-clear").onclick = () => {
+  state.sources = [];
+  renderSources();
+};
+
+function renderSources() {
+  const list = $("sources-list");
+  list.innerHTML = "";
+  for (const s of state.sources) {
+    const li = document.createElement("li");
+    li.style.cursor = "default";
+    li.innerHTML = `<label style="display:flex;gap:10px;align-items:flex-start;margin:0;color:inherit;font-size:13px;cursor:pointer">
+      <input type="checkbox" style="margin-top:4px;width:auto">
+      <span><span class="t"></span><br><span class="s" style="display:block;white-space:normal"></span><a target="_blank" rel="noreferrer" style="font-size:11px"></a></span></label>`;
+    const box = li.querySelector("input");
+    box.checked = !!s.checked;
+    // Updates the count in the header only — re-rendering the list here would
+    // throw away the scroll position mid-tick.
+    box.onchange = () => { s.checked = box.checked; updateSourceCount(); };
+    li.querySelector(".t").textContent = s.title;
+    li.querySelector(".s").textContent = s.description;
+    const a = li.querySelector("a"); a.href = s.url; a.textContent = new URL(s.url).hostname;
+    list.append(li);
+  }
+  updateSourceCount();
+  $("sources").hidden = state.sources.length === 0;
+  $("research-panel").hidden = $("sources").hidden && $("topics").hidden;
+}
+
+function updateSourceCount() {
+  const ticked = state.sources.filter((s) => s.checked).length;
+  $("sources-label").textContent = `Sources — ${ticked} of ${state.sources.length} ticked`;
+}
+
+function mergeSources(results, checked) {
+  for (const r of results) {
+    if (!state.sources.some((s) => s.url === r.url)) state.sources.push({ ...r, checked });
+  }
+  renderSources();
+}
+
+$("research").onclick = (event) => guarded(event.target, "Searching…", async () => {
+  const query = $("topic").value.trim();
+  if (!query) { toast("Type a topic first — that is what gets searched.", "err"); return; }
+  const { results } = await api("/api/research/web", { method: "POST", body: JSON.stringify({ query, count: 8 }) });
+  mergeSources(results, true);
+  toast(`${results.length} sources found. Untick any you do not want the model to use.`);
+});
+
+$("suggest").onclick = (event) => guarded(event.target, "Thinking…", async () => {
+  const seed = $("topic").value.trim();
+  if (!seed) { toast("Type a theme to explore first, e.g. 'MCP servers'.", "err"); return; }
+  const { topics, sources, dropped } = await api("/api/research/topics", {
+    method: "POST",
+    body: JSON.stringify({ seed, target: state.target, provider: $("provider").value, model: $("model").value || undefined }),
+  });
+  mergeSources(sources, false);
+  const list = $("topics-list");
+  list.innerHTML = "";
+  for (const t of topics) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div class="t"></div><div class="s" style="white-space:normal"></div>
+      <span class="differs"></span>`;
+    li.querySelector(".t").textContent = t.title;
+    li.querySelector(".s").textContent = t.angle;
+    // Why this is not just another version of what is already out there. It is
+    // the part worth reading before picking one.
+    const differs = li.querySelector(".differs");
+    if (t.differs) differs.textContent = `vs. the coverage: ${t.differs}`;
+    else differs.remove();
+
+    li.onclick = () => {
+      $("topic").value = t.title;
+      if (t.angle) $("instructions").value = `Angle: ${t.angle}`;
+      for (const s of state.sources) s.checked = false;
+      for (const i of t.sources) if (sources[i]) { const m = state.sources.find((s) => s.url === sources[i].url); if (m) m.checked = true; }
+      renderSources();
+      for (const el of list.children) el.setAttribute?.("aria-current", "false");
+      li.setAttribute("aria-current", "true");
+      // Chosen, so the list folds away and leaves a line saying what was
+      // picked — with a way back to it.
+      state.pickedTopic = t.title;
+      $("topics-picked").querySelector(".t").textContent = t.title;
+      collapse("topics", true);
+      toast("Topic set and its sources ticked. Generate when ready.");
+    };
+    list.append(li);
+  }
+  state.pickedTopic = null;
+  $("topics-picked").hidden = true;
+  $("topics-label").textContent = `Topic ideas — ${topics.length}`;
+  $("topics").hidden = topics.length === 0;
+  $("research-panel").hidden = false;
+  collapse("topics", false);
+  toast(
+    dropped
+      ? `${topics.length} ideas from ${sources.length} results. ${dropped} dropped for restating a headline.`
+      : `${topics.length} ideas from ${sources.length} results.`,
+  );
+});
+
+// The topic is already typed once; typing it again to find a picture for it is
+// busywork. It is mirrored into the image box until you edit that box yourself,
+// after which it is yours and stops being overwritten.
+$("topic").addEventListener("input", () => {
+  if ($("image-query").dataset.touched) return;
+  $("image-query").value = $("topic").value;
+});
+$("image-query").addEventListener("input", () => {
+  $("image-query").dataset.touched = "1";
+});
+
+$("image-search").onclick = (event) => guarded(event.target, "Searching…", async () => {
+  const query = $("image-query").value.trim() || $("topic").value.trim();
+  if (!query) { toast("Describe the image you want, or set a topic first.", "err"); return; }
+  const { results, notice } = await api("/api/research/images", { method: "POST", body: JSON.stringify({ query, count: 12 }) });
+  const grid = $("image-results");
+  grid.innerHTML = "";
+  for (const r of results) {
+    const wrap = document.createElement("div");
+    wrap.className = "thumb";
+    wrap.style.cursor = "pointer";
+    wrap.title = `${r.title}\n${r.page}`;
+    wrap.innerHTML = `<img alt="" loading="lazy" referrerpolicy="no-referrer">`;
+    wrap.querySelector("img").src = r.thumbnail ?? r.url;
+    wrap.onclick = () => importImage(r);
+    grid.append(wrap);
+  }
+  grid.hidden = results.length === 0;
+  $("image-notice").textContent = notice;
+  $("image-notice").hidden = false;
+});
+
+async function importImage(r) {
+  const host = (() => { try { return new URL(r.page).hostname; } catch { return r.page; } })();
+  if (!confirm(`Import this image from ${host}?\n\nBrave gives no licence information. By importing you are confirming you have the right to publish it under your name / the company page. The source is recorded beside the file.`)) return;
+  try {
+    const { path } = await api("/api/research/import-image", {
+      method: "POST",
+      body: JSON.stringify({ url: r.url, page: r.page, title: r.title }),
+    });
+    if (!state.images.includes(path)) state.images.push(path);
+    renderThumbs();
+    toast(`Imported ${path}`);
+  } catch (error) {
+    toast(error.message, "err");
+  }
+}
+
+/**
+ * Discard from the list, without opening the draft first. Deletes the record,
+ * its prose and its rendered deck; ingested images are shared by content hash
+ * and are left alone.
+ */
+async function discardDraft(draft) {
+  const name = draft.topic || draft.id;
+  if (!confirm(`Discard "${name}"?\n\nThis removes the draft, its article prose and its rendered deck. It cannot be undone.`)) return;
+  try {
+    const result = await api(`/api/drafts/${encodeURIComponent(draft.id)}`, { method: "DELETE" });
+    // If it was the one on screen, the form is now editing something that does
+    // not exist — so clear it rather than leave a draft that saves itself back.
+    if (state.id === draft.id) $("new").click();
+    toast(`Discarded "${name}" — ${result.deleted.length} file(s) removed.`);
+    await loadDrafts();
+  } catch (error) {
+    toast(error.message, "err");
+  }
+}
+
+$("delete").onclick = (event) => guarded(event.target, "Deleting…", async () => {
+  if (!state.id) { toast("Nothing saved to delete.", "err"); return; }
+  if (!confirm(`Delete draft "${state.id}"?\n\nThis removes the text, any article prose, and the rendered deck.`)) return;
+  const result = await api(`/api/drafts/${encodeURIComponent(state.id)}`, { method: "DELETE" });
+  toast(`Deleted ${result.deleted.length} file(s).`);
+  $("new").click();
+});
+
+$("archive").onclick = (event) => guarded(event.target, "Archiving…", async () => {
+  const { archived } = await api("/api/archive", { method: "POST" });
+  toast(
+    archived.length
+      ? `Moved ${archived.length} published draft(s) out of the working list.`
+      : "Nothing to archive.",
+  );
+  await Promise.all([loadDrafts(), loadPublished()]);
+});
+
+$("new").onclick = () => {
+  state.id = null; state.status = null; state.images = []; state.saved = null;
+  $("topic").value = ""; $("body").value = ""; $("link").value = "";
+  $("articleTitle").value = ""; $("article").value = "";
+  if (!$("image-query").dataset.touched) $("image-query").value = "";
+  $("image-results").hidden = true;
+  $("preview-panel").hidden = true; lastPreview = null;
+  setFormat("post");
+  renderCount(); renderStatusBadge(); renderThumbs(); loadDrafts();
+};
+
+$("signout").onclick = async () => {
+  // Forgets the cookie only. The LinkedIn authorization itself is revoked on
+  // LinkedIn, under Settings > Data privacy > Permitted services — signing out
+  // of a browser is not a request to give up posting rights.
+  await api("/api/logout", { method: "POST" }).catch(() => {});
+  location.href = "/";
+};
+
+$("refresh").onclick = (event) => guarded(event.target, "…", async () => {
+  await Promise.all([
+    loadStatus(),
+    loadProviders($("provider").value),
+    loadDrafts(),
+    loadPublished(),
+    loadAudit(),
+  ]);
+});
+
+$("body").addEventListener("input", () => {
+  if (state.status === "approved") state.status = "draft";
+  renderStatusBadge();
+  renderCount();
+});
+
+// Every other control that feeds composerPayload(), so the badge tells the
+// truth about screen-versus-storage no matter which one was touched. `input`
+// covers typing; `change` covers the selects.
+for (const id of ["topic", "articleTitle", "link", "visibility", "theme"]) {
+  $(id).addEventListener("input", renderStatusBadge);
+  $(id).addEventListener("change", renderStatusBadge);
+}
+
+// ---- manual article ---------------------------------------------------------
+// A small markdown renderer, for two jobs at once: showing how the piece reads
+// on an article page, and producing the HTML that goes on the clipboard so
+// LinkedIn's editor receives real headings instead of literal "##".
+//
+// Everything is escaped first and the inline rules run on escaped text, so no
+// markup from the model or a paste can reach innerHTML as markup.
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function inlineMd(text) {
+  return escapeHtml(text)
+    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+    .replace(/(^|[\s(])\*(?!\s)(.+?)\*/g, "$1<em>$2</em>")
+    .replace(/`(.+?)`/g, "<code>$1</code>")
+    .replace(/\[(.+?)\]\((https?:[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>')
+    // The author's open questions, so they cannot be pasted into LinkedIn
+    // unnoticed.
+    .replace(/\[([A-Z][A-Z0-9_ -]{2,}(?::[^\]\n]{0,80})?)\]/g, '<span class="marker">[$1]</span>');
+}
+
+function markdownToHtml(markdown) {
+  const html = [];
+  let list = null;
+
+  const closeList = () => {
+    if (list) { html.push(`</${list}>`); list = null; }
+  };
+  const openList = (tag) => {
+    if (list !== tag) { closeList(); html.push(`<${tag}>`); list = tag; }
+  };
+
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line) { closeList(); continue; }
+
+    const heading = line.match(/^(#{1,3})\s+(.*)$/);
+    if (heading) {
+      closeList();
+      const level = heading[1].length;
+      html.push(`<h${level}>${inlineMd(heading[2])}</h${level}>`);
+      continue;
+    }
+    if (/^([-*•])\s+/.test(line)) {
+      openList("ul");
+      html.push(`<li>${inlineMd(line.replace(/^([-*•])\s+/, ""))}</li>`);
+      continue;
+    }
+    if (/^\d+[.)]\s+/.test(line)) {
+      openList("ol");
+      html.push(`<li>${inlineMd(line.replace(/^\d+[.)]\s+/, ""))}</li>`);
+      continue;
+    }
+    if (line.startsWith(">")) {
+      closeList();
+      html.push(`<blockquote>${inlineMd(line.replace(/^>\s?/, ""))}</blockquote>`);
+      continue;
+    }
+    if (/^---+$/.test(line)) { closeList(); html.push("<hr>"); continue; }
+
+    closeList();
+    html.push(`<p>${inlineMd(line)}</p>`);
+  }
+  closeList();
+  return html.join("\n");
+}
+
+function renderManualPreview() {
+  const markdown = $("article").value;
+  $("manual-preview").innerHTML = markdown.trim()
+    ? markdownToHtml(markdown)
+    : `<p style="color:var(--muted)">Generate or write the article, and it will render here the way it reads on an article page.</p>`;
+}
+
+$("copy-rich").onclick = (event) => guarded(event.target, "Copying…", async () => {
+  const markdown = $("article").value.trim();
+  if (!markdown) { toast("Nothing to copy yet.", "err"); return; }
+  const html = markdownToHtml(markdown);
+  try {
+    // Both flavours on the clipboard: the editor takes the HTML and keeps the
+    // formatting, anything plain takes the markdown.
+    await navigator.clipboard.write([
+      new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }),
+        "text/plain": new Blob([markdown], { type: "text/plain" }),
+      }),
+    ]);
+    toast("Copied with formatting. Paste into LinkedIn's article editor — headings and bold carry across.", "good");
+  } catch {
+    // Firefox has no ClipboardItem write for html; plain text still works.
+    await navigator.clipboard.writeText(markdown);
+    toast("Copied as markdown — this browser will not put HTML on the clipboard, so you will have to re-apply headings.", "err");
+  }
+});
+
+$("copy-md").onclick = (event) => guarded(event.target, "Copying…", async () => {
+  const markdown = $("article").value.trim();
+  if (!markdown) { toast("Nothing to copy yet.", "err"); return; }
+  await navigator.clipboard.writeText(markdown);
+  toast("Markdown copied.");
+});
+
+$("shorten").onclick = (event) => guarded(event.target, "Cutting…", async () => {
+  const before = [...articleAsText($("article").value)].length;
+  const result = await api("/api/shorten", {
+    method: "POST",
+    body: JSON.stringify({
+      text: $("article").value,
+      // Room for the author link the server appends at publish time.
+      limit: 2900,
+      provider: $("provider").value,
+      model: $("model").value || undefined,
+    }),
+  });
+  $("article").value = result.text;
+  state.status = "draft";
+  renderArticleMeta(); renderStatusBadge();
+  const after = [...articleAsText(result.text)].length;
+  toast(
+    after > 3000
+      ? `Still ${after} characters — run it again, or move to Carousel post.`
+      : `Cut from ${before} to ${after} characters. Read it: whole sections were removed.`,
+    after > 3000 ? "err" : "",
+  );
+});
+
+$("article").addEventListener("input", () => {
+  if (state.status === "approved") state.status = "draft";
+  renderStatusBadge();
+  renderArticleMeta();
+});
+
+// Remembered like the model is: it is a preference about how you write, not a
+// property of one draft.
+$("depth").value = store("agentDepth") ?? "standard";
+$("depth").addEventListener("change", () => store("agentDepth", $("depth").value));
+
+$("theme").addEventListener("change", () => {
+  store("agentDeckTheme", $("theme").value);
+  $("theme-note").textContent = $("theme").value
+    ? "Remembered on this device for new drafts."
+    : "Unset drafts use LINKEDIN_DECK_THEME.";
+});
+
+for (const button of document.querySelectorAll("[data-target]")) {
+  button.onclick = () => setTarget(button.dataset.target);
+}
+for (const button of document.querySelectorAll("[data-format]")) {
+  button.onclick = () => setFormat(button.dataset.format);
+}
+
+// Renders the deck without publishing, so the PDF can be read before approving.
+// The server writes it into storage on any publishDraft call, dry run included.
+$("render").onclick = (event) => guarded(event.target, "Rendering…", async () => {
+  if (!$("article").value.trim()) { toast("Write the article prose first.", "err"); return; }
+  if (!$("articleTitle").value.trim()) { toast("An article needs a deck title.", "err"); return; }
+  // Rendered from what is in the boxes, saving nothing: looking at the deck is
+  // not deciding to keep the draft.
+  await showDeckFrom({
+    article: $("article").value,
+    articleTitle: $("articleTitle").value.trim(),
+    topic: $("topic").value.trim() || undefined,
+    theme: $("theme").value || undefined,
+  });
+  // If the preview card is already up, it was showing a placeholder where the
+  // deck goes; now there is one to show.
+  if (!$("preview-panel").hidden && lastPreview) renderAttachment(lastPreview.attachment ?? { kind: "none" });
+  toast("Deck rendered — this is exactly what LinkedIn would receive. Nothing was saved; use Save draft to keep it.");
+});
+
+let deckUrl = null;
+
+/** The deck stored against a draft or a published post. */
+async function showDeck(id) {
+  return paintDeck(
+    await fetch(`/api/drafts/${encodeURIComponent(id)}/pdf`, { headers: { "x-agent-token": TOKEN } }),
+  );
+}
+
+/** A deck rendered from what is on screen, stored nowhere. */
+async function showDeckFrom(payload) {
+  return paintDeck(
+    await fetch("/api/render-deck", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-agent-token": TOKEN },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+async function paintDeck(res) {
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error ?? `Could not load the deck (${res.status}).`);
+  }
+  if (deckUrl) URL.revokeObjectURL(deckUrl);
+  deckUrl = URL.createObjectURL(await res.blob());
+  const frame = $("pdf-frame");
+  // #toolbar=0 drops the built-in viewer's chrome, so the frame shows the deck
+  // rather than a PDF reader with a deck inside it. Ignored by viewers that do
+  // not support it, which costs nothing.
+  frame.src = `${deckUrl}#toolbar=0&navpanes=0&view=FitH`;
+  frame.hidden = false;
+  const open = $("pdf-open");
+  open.href = deckUrl;
+  open.hidden = false;
+  frame.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+// ---- image studio ----------------------------------------------------------
+// Draws the card on a canvas rather than converting HTML: the browser is the
+// only renderer involved either way, and drawing it directly means real font
+// metrics, no foreignObject quirks, and nothing to install. The palette and
+// the furniture — accent bar, eyebrow, rule — are the deck's, so a generated
+// image and a generated deck look like they came from the same place.
+const CARD_THEMES = {
+  dark: { bg: "#0b0e13", heading: "#edeff2", muted: "#7d8698", accent: "#8caaf5" },
+  light: { bg: "#ffffff", heading: "#171a1f", muted: "#858b96", accent: "#0a66c2" },
+};
+const CARD_SIZES = { square: [1200, 1200], wide: [1200, 627] };
+
+function wrapCanvas(ctx, text, maxWidth) {
+  const lines = [];
+  let line = "";
+  for (const word of text.split(/\s+/).filter(Boolean)) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && ctx.measureText(candidate).width > maxWidth) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = candidate;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawCard() {
+  const canvas = $("card-canvas");
+  const [width, height] = CARD_SIZES[$("card-shape").value] ?? CARD_SIZES.square;
+  canvas.width = width;
+  canvas.height = height;
+
+  const theme = CARD_THEMES[$("card-theme").value] ?? CARD_THEMES.dark;
+  const ctx = canvas.getContext("2d");
+  const pad = Math.round(width * 0.075);
+  const bar = Math.round(width * 0.012);
+
+  ctx.fillStyle = theme.bg;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = theme.accent;
+  ctx.fillRect(0, 0, bar, height);
+
+  const font = (size, weight) =>
+    `${weight} ${size}px "Segoe UI", ui-sans-serif, system-ui, -apple-system, Roboto, sans-serif`;
+  const left = pad;
+  const maxWidth = width - pad * 2;
+
+  const eyebrow = $("card-eyebrow").value.trim().toUpperCase();
+  let y = pad + 40;
+  if (eyebrow) {
+    ctx.font = font(Math.round(width * 0.022), 700);
+    // Supported in Chrome/Edge/Safari 17; ignored elsewhere, which only costs
+    // the tracking, not the layout.
+    try { ctx.letterSpacing = "3px"; } catch {}
+    ctx.fillStyle = theme.accent;
+    ctx.fillText(eyebrow, left, y);
+    try { ctx.letterSpacing = "0px"; } catch {}
+    y += Math.round(height * 0.055);
+  }
+
+  // The headline sizes itself to the space that is actually left, the same way
+  // the deck's does — a long line steps down instead of running off the card.
+  const headline = $("card-headline").value.trim() || "Your line goes here.";
+  const footRoom = Math.round(height * 0.12);
+  const room = height - y - pad - footRoom;
+  let size = Math.round(width * 0.075);
+  let lines = [];
+  for (; size > 20; size -= 2) {
+    ctx.font = font(size, 700);
+    lines = wrapCanvas(ctx, headline, maxWidth);
+    if (lines.length * size * 1.22 <= room) break;
+  }
+
+  ctx.fillStyle = theme.heading;
+  ctx.font = font(size, 700);
+  // Vertically centred in what is left, so a short line does not hang at the
+  // top of an empty card.
+  let textY = y + Math.max(0, (room - lines.length * size * 1.22) / 2) + size;
+  for (const line of lines) {
+    ctx.fillText(line, left, textY);
+    textY += size * 1.22;
+  }
+
+  ctx.fillStyle = theme.accent;
+  ctx.fillRect(left, textY - size * 0.55, Math.round(width * 0.07), Math.max(3, Math.round(width * 0.004)));
+
+  const footnote = $("card-footnote").value.trim();
+  if (footnote) {
+    ctx.font = font(Math.round(width * 0.022), 400);
+    ctx.fillStyle = theme.muted;
+    ctx.fillText(footnote, left, height - pad);
+  }
+}
+
+/** The opening line of the post, which is usually the line worth putting up. */
+function firstSentence(text) {
+  const clean = text.replace(/\s+/g, " ").trim();
+  const stop = clean.search(/[.!?](\s|$)/);
+  return stop === -1 ? clean.slice(0, 160) : clean.slice(0, stop + 1);
+}
+
+function openStudio() {
+  const studio = $("studio");
+  studio.hidden = !studio.hidden;
+  $("studio-toggle").textContent = studio.hidden ? "Design an image" : "Hide the designer";
+  if (studio.hidden) return;
+  if (!$("card-eyebrow").value) $("card-eyebrow").value = $("topic").value.slice(0, 40);
+  if (!$("card-headline").value) {
+    const source = state.format === "article" && state.articleMode !== "text" ? $("article").value : $("body").value;
+    $("card-headline").value = firstSentence(source.replace(/^#.*$/gm, ""));
+  }
+  if (!$("card-footnote").value) {
+    $("card-footnote").value =
+      state.target === "company" ? state.companyName ?? "" : state.memberName ?? "";
+  }
+  $("card-theme").value = $("theme").value || "dark";
+  drawCard();
+}
+
+$("studio-toggle").onclick = openStudio;
+/** Whichever text is the actual post in this format. */
+function cardSource() {
+  return state.format === "article" && state.articleMode !== "text"
+    ? $("article").value
+    : $("body").value;
+}
+
+$("card-pull").onclick = () => {
+  $("card-headline").value = firstSentence(cardSource().replace(/^#.*$/gm, ""));
+  drawCard();
+};
+
+$("card-write").onclick = (event) => guarded(event.target, "Writing…", async () => {
+  const text = cardSource().trim();
+  if (!text) { toast("Write or generate the post first — the card is drawn from it.", "err"); return; }
+  const result = await api("/api/card-text", {
+    method: "POST",
+    body: JSON.stringify({
+      text,
+      topic: $("topic").value.trim() || undefined,
+      target: state.target,
+      provider: $("provider").value,
+      model: $("model").value || undefined,
+    }),
+  });
+  if (result.eyebrow) $("card-eyebrow").value = result.eyebrow;
+  $("card-headline").value = result.headline;
+  drawCard();
+  toast(`Card line written with ${result.provider}. Edit it if it overstates anything.`);
+});
+for (const id of ["card-eyebrow", "card-headline", "card-footnote"]) {
+  $(id).addEventListener("input", drawCard);
+}
+for (const id of ["card-theme", "card-shape"]) {
+  $(id).addEventListener("change", drawCard);
+}
+
+$("card-attach").onclick = (event) => guarded(event.target, "Attaching…", async () => {
+  drawCard();
+  const blob = await new Promise((resolve) => $("card-canvas").toBlob(resolve, "image/png"));
+  if (!blob) { toast("The browser could not export the canvas.", "err"); return; }
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+  const { path } = await api("/api/upload", {
+    method: "POST",
+    body: JSON.stringify({ name: `card-${Date.now()}.png`, data: base64 }),
+  });
+  state.images.push(path);
+  renderThumbs();
+  toast(`Attached ${path} — yours, so no licence question.`);
+});
+
+// ---- image upload ----------------------------------------------------------
+async function upload(files) {
+  for (const file of files) {
+    const base64 = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(",")[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    try {
+      const { path } = await api("/api/upload", {
+        method: "POST",
+        body: JSON.stringify({ name: file.name, data: base64 }),
+      });
+      state.images.push(path);
+      toast(`Attached ${path}`);
+    } catch (error) {
+      toast(error.message, "err");
+    }
+  }
+  renderThumbs();
+}
+
+$("drop").onclick = () => $("file").click();
+$("file").onchange = (event) => upload([...event.target.files]);
+$("drop").addEventListener("dragover", (event) => {
+  event.preventDefault();
+  $("drop").classList.add("hot");
+});
+$("drop").addEventListener("dragleave", () => $("drop").classList.remove("hot"));
+$("drop").addEventListener("drop", (event) => {
+  event.preventDefault();
+  $("drop").classList.remove("hot");
+  upload([...event.dataTransfer.files]);
+});
+
+// ---- install prompt ---------------------------------------------------------
+// Chrome and Edge fire `beforeinstallprompt`; we hold it and offer a button.
+// iOS Safari has no programmatic install at all — the only path is
+// Share → Add to Home Screen — so on iOS the banner is instructions, not a
+// button. Neither shows once already running as an installed app.
+const isStandalone =
+  matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) && !window.MSStream;
+let installEvent = null;
+
+function showInstall(text, withButton) {
+  if (isStandalone || store("installDismissed") === "1") return;
+  // Nothing to install into while the sign-in screen is up, and the banner's
+  // elements are no longer on the page.
+  if (!$("install-text")) return;
+  $("install-text").textContent = text;
+  $("install-go").hidden = !withButton;
+  $("install").hidden = false;
+}
+
+addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  installEvent = event;
+  showInstall("Install this as an app for a home-screen icon and a full-screen window.", true);
+});
+
+$("install-go").onclick = async () => {
+  if (!installEvent) return;
+  installEvent.prompt();
+  const { outcome } = await installEvent.userChoice;
+  installEvent = null;
+  $("install").hidden = true;
+  if (outcome === "accepted") toast("Installed. Launch it from your home screen or app list.", "good");
+};
+
+$("install-dismiss").onclick = () => {
+  store("installDismissed", "1");
+  $("install").hidden = true;
+};
+
+if (isIOS) {
+  showInstall(
+    "On iPhone or iPad: tap Share (the square with an arrow), then “Add to Home Screen” to install this app.",
+    false,
+  );
+}
+
+// ---- theme ------------------------------------------------------------------
+// Three states, not two. "System" has to be one of them and has to be the
+// default: a two-way toggle either ignores the OS setting or silently pins the
+// theme the first time it is touched, and neither is what someone who has set
+// their laptop to switch at sunset expects.
+//
+// The choice is a `data-theme` attribute on <html>; the CSS decides the rest,
+// so nothing here knows any colours.
+const THEMES = [
+  { id: "system", glyph: "◐", label: "System" },
+  { id: "light", glyph: "☀", label: "Light" },
+  { id: "dark", glyph: "☾", label: "Dark" },
+];
+
+function applyTheme(id) {
+  const theme = THEMES.find((t) => t.id === id) ?? THEMES[0];
+  const root = document.documentElement;
+
+  if (theme.id === "system") root.removeAttribute("data-theme");
+  else root.setAttribute("data-theme", theme.id);
+
+  $("theme-glyph").textContent = theme.glyph;
+  const title = `Theme: ${theme.label.toLowerCase()} — click to change`;
+  $("theme-switch").title = title;
+  $("theme-switch").setAttribute("aria-label", title);
+
+  // The browser chrome on Android and the iOS status bar read this, so a page
+  // forced light under a dark OS does not keep a dark title bar.
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = theme.id === "light" ? "#ffffff" : "#0b0d12";
+
+  store("agentTheme", theme.id);
+}
+
+$("theme-switch").onclick = () => {
+  const current = store("agentTheme") ?? "system";
+  const next = THEMES[(THEMES.findIndex((t) => t.id === current) + 1) % THEMES.length];
+  applyTheme(next.id);
+  toast(`Theme: ${next.label}`);
+};
+
+// ---- keyboard ---------------------------------------------------------------
+// Two shortcuts, both for things done dozens of times a session. Ctrl+Enter is
+// deliberately inert inside the two prose boxes: Generate replaces what is in
+// them, and losing an edited draft to a reflex keystroke is not a trade worth
+// making. Print (Ctrl+P) is left alone.
+addEventListener("keydown", (event) => {
+  if (!event.ctrlKey && !event.metaKey) return;
+  const inProse = ["body", "article"].includes(document.activeElement?.id);
+
+  // Optional: the buttons are gone once the sign-in screen has taken the page,
+  // and a shortcut must not throw there.
+  if (event.key === "Enter" && !inProse) {
+    event.preventDefault();
+    $("generate")?.click();
+  } else if (event.key.toLowerCase() === "s") {
+    event.preventDefault();
+    $("save")?.click();
+  }
+});
+
+// ---- boot ------------------------------------------------------------------
+// The attribute was already set by the inline script in <head>; this is what
+// puts the matching glyph and label on the button.
+applyTheme(store("agentTheme") ?? "system");
+setFormat("post");
+renderCount(); renderStatusBadge();
+loadStatus().catch((error) => toast(error.message, "err"));
+loadDrafts().catch(() => {});
+loadPublished().catch(() => {});
+loadAudit().catch(() => {});
+loadProviders().catch((error) => toast(`Providers: ${error.message}`, "err"));
+</script>
+</body>
+</html>

@@ -1,8 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
 import { config } from "../config.ts";
-
-const TOKEN_FILE = path.join(config.stateDir, "tokens.json");
+import { getJson, keys, putJson, storage } from "../storage/index.ts";
 
 export type TokenSet = {
   accessToken: string;
@@ -17,25 +14,14 @@ export type TokenSet = {
   obtainedAt: number;
 };
 
-export function loadTokens(): TokenSet | null {
-  if (!fs.existsSync(TOKEN_FILE)) return null;
-  try {
-    return JSON.parse(fs.readFileSync(TOKEN_FILE, "utf8")) as TokenSet;
-  } catch {
-    return null;
-  }
+export function loadTokens(): Promise<TokenSet | null> {
+  return getJson<TokenSet>(storage, keys.tokens);
 }
 
-export function saveTokens(tokens: TokenSet): void {
-  fs.mkdirSync(config.stateDir, { recursive: true });
-  // Write to a sibling temp file and rename, so a crash mid-write cannot leave
-  // a truncated token file behind.
-  const tmp = `${TOKEN_FILE}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(tokens, null, 2), {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  fs.renameSync(tmp, TOKEN_FILE);
+export function saveTokens(tokens: TokenSet): Promise<void> {
+  // The local backend writes temp-then-rename, so a crash mid-write cannot
+  // leave a truncated token file behind.
+  return putJson(storage, keys.tokens, tokens);
 }
 
 export type TokenStatus = {
@@ -52,8 +38,20 @@ export type TokenStatus = {
   hint: string;
 };
 
-export function tokenStatus(): TokenStatus {
-  const tokens = loadTokens();
+/**
+ * How to (re)authorize, in the words of the install you are actually running.
+ * On a laptop that is a terminal command; on a deployment there is no terminal,
+ * and signing in again is what refreshes the token — so telling a browser user
+ * to run npm would be advice they cannot follow.
+ */
+function reauthorize(): string {
+  return config.authMode === "oauth"
+    ? "Sign out and sign in with LinkedIn again"
+    : "Run `npm run auth`";
+}
+
+export async function tokenStatus(): Promise<TokenStatus> {
+  const tokens = await loadTokens();
   if (!tokens) {
     return {
       authorized: false,
@@ -66,7 +64,7 @@ export function tokenStatus(): TokenStatus {
       canPublishAsMember: false,
       canPublishAsOrganization: false,
       canReadOrganization: false,
-      hint: "Not authorized yet. Run `npm run auth` and complete the LinkedIn consent screen in your browser.",
+      hint: `Not authorized yet. ${reauthorize()} and complete the LinkedIn consent screen.`,
     };
   }
 
@@ -77,9 +75,9 @@ export function tokenStatus(): TokenStatus {
 
   let hint: string;
   if (expired) {
-    hint = "Access token has expired. Run `npm run auth` again to re-authorize.";
+    hint = `Access token has expired. ${reauthorize()} to re-authorize.`;
   } else if (daysRemaining <= 7) {
-    hint = `Access token expires in ${daysRemaining} day(s). Run \`npm run auth\` to refresh it.`;
+    hint = `Access token expires in ${daysRemaining} day(s). ${reauthorize()} to refresh it.`;
   } else {
     hint = `Access token valid for ${daysRemaining} more day(s).`;
   }
@@ -105,7 +103,7 @@ export function tokenStatus(): TokenStatus {
  * actionable message rather than letting a 401 surface from deep in a call.
  */
 export async function requireAccessToken(): Promise<string> {
-  const tokens = loadTokens();
+  const tokens = await loadTokens();
   if (!tokens) {
     throw new Error(
       "Not authorized with LinkedIn yet. Run `npm run auth` in the project directory, then retry.",
@@ -170,6 +168,6 @@ export async function refreshAccessToken(
     obtainedAt: Date.now(),
   };
 
-  saveTokens(next);
+  await saveTokens(next);
   return next;
 }
