@@ -408,8 +408,14 @@ as one member while holding a token that posts as another.
   `src/http/ui.html` and the PWA files into `public/` at build time, so the page
   comes off the CDN and only real work reaches a function. `src/http/` stays the
   only place any of it is edited.
-- **[vercel.json](vercel.json)** — the build command and a 60-second function
-  limit, which is what generating a draft needs.
+- **[vercel.json](vercel.json)** — the build command, a 60-second function limit
+  (what generating a draft needs), and the rewrite that makes nested API paths
+  work. That rewrite is not optional: on a project with no framework preset the
+  catch-all filename alone routes only `/api/<one-segment>`, so `/api/drafts`
+  answered while `/api/drafts/<id>`, `/api/drafts/<id>/publish` and
+  `/api/research/images` all returned Vercel's own 404 — publishing among them.
+  The file is strict JSON and rejects unknown keys, so the explanation lives
+  here rather than beside the rule.
 
 ### Try it locally first
 

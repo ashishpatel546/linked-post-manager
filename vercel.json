@@ -8,11 +8,7 @@
     }
   },
   "rewrites": [
-    {
-      "comment": "Without this only /api/<one-segment> reaches the function. On a project with no framework preset, the catch-all filename alone does not route nested paths — /api/drafts worked while /api/drafts/<id>, /api/drafts/<id>/publish and /api/research/images all returned Vercel's own 404. Publishing was among the casualties.",
-      "source": "/api/:path*",
-      "destination": "/api/[...path]"
-    }
+    { "source": "/api/:path*", "destination": "/api/[...path]" }
   ],
   "headers": [
     {
