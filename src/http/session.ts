@@ -220,13 +220,59 @@ function html(res: ServerResponse, status: number, body: string): void {
 }
 
 /** GET /api/login — start the LinkedIn consent flow. */
-export function handleLogin(res: ServerResponse): void {
+export function handleLogin(req: IncomingMessage, res: ServerResponse): void {
+  // Caught here rather than at LinkedIn, which answers a mismatch with "Bummer,
+  // something went wrong. The redirect_uri does not match the registered value"
+  // — true, but it names neither value, so the actual cause (a domain that
+  // moved while LINKEDIN_REDIRECT_URI stayed behind) is invisible.
+  const mismatch = redirectOriginMismatch(req);
+  if (mismatch) {
+    html(res, 500, page("Sign-in is misconfigured", mismatch));
+    return;
+  }
+
   // Random, signed, and short-lived. It comes back through LinkedIn, so the
   // only thing proving the callback belongs to a flow this app started is that
   // the returned value matches a cookie only this app could have written.
   const state = crypto.randomBytes(16).toString("hex");
   setCookie(res, STATE_COOKIE, sign({ state, expiresAt: Date.now() + STATE_TTL_MS }), STATE_TTL_MS / 1000);
   redirect(res, buildAuthorizeUrl(state, config.requestOrgScopes));
+}
+
+/**
+ * Whether the configured callback points somewhere other than the host being
+ * browsed. Returns the explanation, or null when they agree.
+ *
+ * Renaming a deployment's domain does not touch its environment variables, so
+ * the two drift apart silently and the only symptom is LinkedIn's generic
+ * refusal. It is also not merely cosmetic: the state cookie is set on the host
+ * you are on, so even a registered-but-different callback host would come back
+ * without it and fail verification.
+ */
+function redirectOriginMismatch(req: IncomingMessage): string | null {
+  const host = req.headers.host;
+  if (!host) return null;
+
+  let configured: URL;
+  try {
+    configured = new URL(config.redirectUri);
+  } catch {
+    return `LINKEDIN_REDIRECT_URI is not a valid URL: ${config.redirectUri}`;
+  }
+
+  // Compare hosts, not full origins: a proxy can terminate TLS and forward as
+  // http, which would make the scheme differ for reasons that are not a fault.
+  if (configured.host === host) return null;
+
+  return (
+    `This app is being served from ${host}, but LINKEDIN_REDIRECT_URI says the ` +
+    `LinkedIn callback is ${config.redirectUri}.\n\n` +
+    `Sign-in cannot work while those disagree. Set LINKEDIN_REDIRECT_URI to ` +
+    `https://${host}/api/callback, redeploy so the change takes effect, and make ` +
+    `sure that same URL is an Authorized redirect URL on the LinkedIn app's Auth tab.\n\n` +
+    `The usual cause is a domain that was renamed: changing it does not update ` +
+    `the environment variables that referred to the old one.`
+  );
 }
 
 /** LinkedIn's OIDC identity endpoint, called with a token that is not stored yet. */

@@ -768,7 +768,7 @@ export async function handleHttp(
     }
 
     // The way in and the way out, so necessarily reachable without a session.
-    if (url.pathname === "/api/login") return handleLogin(res);
+    if (url.pathname === "/api/login") return handleLogin(req, res);
     if (url.pathname === "/api/callback") return handleCallback(req, res, url);
     if (url.pathname === "/api/logout") return handleLogout(res);
 
