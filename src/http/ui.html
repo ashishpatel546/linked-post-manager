@@ -469,13 +469,46 @@
     border: 1px solid var(--line); border-radius: 7px; text-decoration: none; color: var(--text);
     background: var(--panel-2); font-weight: 500;
   }
+  /* The install offer, as a card rather than a notification strip. It is an
+     invitation, so it gets the brand mark, a headline and room to breathe —
+     the old single-line bar read as a warning and was dismissed like one. */
   #install {
-    display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-    margin: 0 20px; padding: 10px 14px; border-radius: 8px; font-size: 13px;
-    border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
+    display: flex; gap: 14px; align-items: center;
+    margin: 0 20px; padding: 14px 16px; border-radius: var(--radius);
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+    background:
+      radial-gradient(420px 120px at 0% 0%, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%),
+      var(--panel);
+    box-shadow: var(--shadow);
   }
   @media (max-width: 760px) { #install { margin: 0 14px; } }
-  #install .spacer { flex: 1; display: block; }
+  #install .install-mark {
+    width: 40px; height: 40px; flex: 0 0 40px; border-radius: 11px;
+    background: var(--brand); display: grid; place-items: center; color: #fff;
+    box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--accent) 75%, transparent);
+  }
+  #install .install-mark svg { width: 21px; height: 21px; display: block; }
+  #install .install-copy { flex: 1; min-width: 0; }
+  #install .install-copy b { display: block; font-size: 14px; letter-spacing: -.01em; }
+  #install .install-copy span { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  #install .install-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+  /* Under ~560px the card stacks, so the buttons get a row of their own
+     rather than squeezing the sentence into two words per line. */
+  @media (max-width: 560px) {
+    #install { flex-wrap: wrap; }
+    #install .install-copy { flex: 1 1 100%; order: 2; }
+    #install .install-actions { flex: 1 1 100%; order: 3; }
+    #install .install-actions button { flex: 1; }
+  }
+
+  /* The same offer on the sign-in screen, where the app itself does not exist
+     yet. Quieter: signing in is the primary action there. */
+  .signin .install {
+    margin-top: 26px; padding-top: 22px; border-top: 1px solid var(--line);
+  }
+  .signin .install b { display: block; font-size: 13px; margin-bottom: 3px; }
+  .signin .install span { display: block; font-size: 12.5px; color: var(--muted); }
+  .signin .install button { margin-top: 12px; }
   /* A suggestion list is worth reading through, but not worth losing the form
      to: it scrolls in place, and the whole block folds away once a topic has
      been picked. */
@@ -627,10 +660,19 @@
 </header>
 
 <div id="install" hidden style="margin-top:14px">
-  <span id="install-text"></span>
-  <span class="spacer"></span>
-  <button id="install-go" hidden>Install app</button>
-  <button id="install-dismiss">Not now</button>
+  <div class="install-mark" aria-hidden="true">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 20h16"></path>
+    </svg>
+  </div>
+  <div class="install-copy">
+    <b id="install-title">Install Postwright</b>
+    <span id="install-text"></span>
+  </div>
+  <div class="install-actions">
+    <button class="primary" id="install-go" hidden>Install app</button>
+    <button id="install-dismiss">Not now</button>
+  </div>
 </div>
 
 <main>
@@ -1059,8 +1101,13 @@ function showSignIn(loginPath, reason) {
       <a class="primary" id="signin-go">Sign in with LinkedIn</a>
       <span class="note">The same sign-in authorizes posting, so there is no
         second step. Only members on the allowlist can get in.</span>
+      <div class="install" id="signin-install" hidden></div>
     </div>`;
   document.getElementById("signin-go").href = loginPath;
+
+  // Installing needs no account, so the offer belongs here too — and this is
+  // the screen a first-time visitor actually sees.
+  paintInstall();
 
   // textContent, not innerHTML: the reason comes from the server and is shown
   // verbatim, which is only safe if it cannot be markup.
@@ -2816,42 +2863,95 @@ const isStandalone =
 const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) && !window.MSStream;
 let installEvent = null;
 
-function showInstall(text, withButton) {
-  if (isStandalone || store("installDismissed") === "1") return;
-  // Nothing to install into while the sign-in screen is up, and the banner's
-  // elements are no longer on the page.
-  if (!$("install-text")) return;
-  $("install-text").textContent = text;
-  $("install-go").hidden = !withButton;
-  $("install").hidden = false;
+const INSTALL_PITCH =
+  "Add it to your home screen or dock — opens in its own window, no browser bar, and drafts stay one tap away.";
+const IOS_PITCH =
+  "On iPhone or iPad: tap Share (the square with an arrow), then “Add to Home Screen”.";
+
+/**
+ * Whether there is an install to offer at all. Held as state rather than
+ * written straight to the DOM, because the sign-in screen replaces the whole
+ * body — so whichever surface is on screen when the browser decides the app is
+ * installable has to be able to ask, rather than be told once and miss it.
+ */
+function installOffer() {
+  if (isStandalone || store("installDismissed") === "1") return null;
+  if (installEvent) return { text: INSTALL_PITCH, canPrompt: true };
+  if (isIOS) return { text: IOS_PITCH, canPrompt: false };
+  return null;
 }
 
-addEventListener("beforeinstallprompt", (event) => {
-  event.preventDefault();
-  installEvent = event;
-  showInstall("Install this as an app for a home-screen icon and a full-screen window.", true);
-});
-
-$("install-go").onclick = async () => {
+async function runInstall() {
   if (!installEvent) return;
   installEvent.prompt();
   const { outcome } = await installEvent.userChoice;
   installEvent = null;
-  $("install").hidden = true;
+  paintInstall();
   if (outcome === "accepted") toast("Installed. Launch it from your home screen or app list.", "good");
-};
-
-$("install-dismiss").onclick = () => {
-  store("installDismissed", "1");
-  $("install").hidden = true;
-};
-
-if (isIOS) {
-  showInstall(
-    "On iPhone or iPad: tap Share (the square with an arrow), then “Add to Home Screen” to install this app.",
-    false,
-  );
 }
+
+function dismissInstall() {
+  store("installDismissed", "1");
+  paintInstall();
+}
+
+/**
+ * Draws the offer onto whichever surface exists — the app's banner, or the
+ * sign-in screen. On a deployment the sign-in screen is what a first-time
+ * visitor sees, and it used to be the one place the offer could never appear:
+ * showSignIn replaces the body, taking the banner with it.
+ */
+function paintInstall() {
+  const offer = installOffer();
+
+  const banner = $("install");
+  if (banner) {
+    if (!offer) {
+      banner.hidden = true;
+    } else {
+      $("install-text").textContent = offer.text;
+      $("install-go").hidden = !offer.canPrompt;
+      banner.hidden = false;
+    }
+  }
+
+  const slot = $("signin-install");
+  if (slot) {
+    slot.innerHTML = "";
+    if (!offer) { slot.hidden = true; return; }
+    slot.hidden = false;
+    const title = document.createElement("b");
+    title.textContent = "Install it as an app";
+    const detail = document.createElement("span");
+    detail.textContent = offer.text;
+    slot.append(title, detail);
+    if (offer.canPrompt) {
+      const button = document.createElement("button");
+      button.textContent = "Install app";
+      button.onclick = runInstall;
+      slot.append(button);
+    }
+  }
+}
+
+addEventListener("beforeinstallprompt", (event) => {
+  // Held rather than shown: the browser's own bar appears at a moment of its
+  // choosing, and the offer belongs where the rest of the app's language is.
+  event.preventDefault();
+  installEvent = event;
+  paintInstall();
+});
+
+// Nothing left to offer once it is installed, on either surface.
+addEventListener("appinstalled", () => {
+  installEvent = null;
+  paintInstall();
+});
+
+$("install-go").onclick = runInstall;
+$("install-dismiss").onclick = dismissInstall;
+
+paintInstall();
 
 // ---- theme ------------------------------------------------------------------
 // Three states, not two. "System" has to be one of them and has to be the
