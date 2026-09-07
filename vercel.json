@@ -4,8 +4,7 @@
   "outputDirectory": "public",
   "functions": {
     "api/[...path].ts": {
-      "maxDuration": 60,
-      "memory": 1024
+      "maxDuration": 60
     }
   },
   "headers": [

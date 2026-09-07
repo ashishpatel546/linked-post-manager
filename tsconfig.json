@@ -4,6 +4,13 @@
     "lib": ["ES2023"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    // Required, not redundant: dropping it does not fall back to auto-discovery
+    // under TypeScript 7 — every `process`, `console` and `node:` import goes
+    // unresolved. Vercel's build prints `TS2688: Cannot find type definition
+    // file for 'node'` because its transpile step resolves types from a
+    // different root; that message is cosmetic (the step is transpile-only and
+    // the deployment is fine), and silencing it would cost the local typecheck,
+    // which is the only real check this project has.
     "types": ["node"],
 
     "strict": true,
@@ -18,5 +25,8 @@
     "isolatedModules": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts"]
+  // `api/` as well as `src/`: the Vercel function entry is real code that is
+  // compiled on every deploy, and leaving it out meant `npm run typecheck`
+  // passed while never having looked at it.
+  "include": ["src/**/*.ts", "api/**/*.ts"]
 }
