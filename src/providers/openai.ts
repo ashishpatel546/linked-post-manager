@@ -58,18 +58,30 @@ export const openaiProvider: DraftProvider = {
       throw new ProviderError("openai", "OPENAI_API_KEY is not set in .env.");
     }
 
-    const response = await fetch(`${config.openaiBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.openaiApiKey}`,
-      },
-      body: JSON.stringify({
-        model: options.model || config.openaiModel,
-        messages,
-        temperature: 0.7,
-      }),
-    });
+    const model = options.model || config.openaiModel;
+
+    // Two layers, because either alone is wrong.
+    //
+    // The pattern skips the parameter for the families known to reject it, so
+    // the common case costs no extra round trip. The retry below catches every
+    // model the pattern has not heard of — including ones released after this
+    // was written, and other vendors behind OPENAI_BASE_URL. Guessing from a
+    // list that only ever goes stale is what turns "the model changed" into a
+    // 400 the user has to decode.
+    let response = await send(model, messages, !fixedTemperatureModel(model));
+
+    if (response.status === 400) {
+      const detail = await response.text();
+      if (!rejectsTemperature(detail)) {
+        throw new ProviderError("openai", `OpenAI returned 400: ${detail.slice(0, 300)}`);
+      }
+      // Said once, so a model quietly running at its default temperature is not
+      // a silent difference in how drafts read.
+      console.error(
+        `[postwright] ${model} does not accept a custom temperature; retrying at the model default.`,
+      );
+      response = await send(model, messages, false);
+    }
 
     if (!response.ok) {
       throw new ProviderError(
@@ -86,3 +98,36 @@ export const openaiProvider: DraftProvider = {
     return text;
   },
 };
+
+/**
+ * Families that accept only their default temperature: the o-series reasoning
+ * models, and GPT-5. Deliberately a prefix test — `gpt-5-nano`, `gpt-5-mini`
+ * and whatever else ships under that name behave the same way.
+ */
+function fixedTemperatureModel(model: string): boolean {
+  return /^(o\d|gpt-5)/i.test(model.trim());
+}
+
+/** OpenAI's own wording for it, matched loosely enough to survive rephrasing. */
+function rejectsTemperature(body: string): boolean {
+  return /temperature/i.test(body) && /unsupported|not supported|does not support/i.test(body);
+}
+
+function send(
+  model: string,
+  messages: ChatMessage[],
+  withTemperature: boolean,
+): Promise<Response> {
+  return fetch(`${config.openaiBaseUrl}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.openaiApiKey}`,
+    },
+    body: JSON.stringify({
+      model,
+      messages,
+      ...(withTemperature ? { temperature: 0.7 } : {}),
+    }),
+  });
+}
