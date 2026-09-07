@@ -104,7 +104,9 @@ const LOCAL_ONLY = [
 ];
 
 const OVERRIDES = new Map([
-  ["PUBLIC_URL", [url, "the deployment's own address"]],
+  // APP_URL, not PUBLIC_URL: Vercel refuses to store any name starting with
+  // PUBLIC_, because some frameworks expose those to the browser.
+  ["APP_URL", [url, "the deployment's own address"]],
   ["LINKEDIN_REDIRECT_URI", [`${url}/api/callback`, "must also be registered on the LinkedIn app's Auth tab"]],
   ["SESSION_SECRET", [sessionSecret(), "signs the session cookie; changing it signs everyone out"]],
   ["STORAGE_BACKEND", ["s3", "a Vercel filesystem is read-only and per-instance"]],

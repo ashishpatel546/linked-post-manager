@@ -208,7 +208,13 @@ export const config = {
    * per-deployment URL cannot be a registered OAuth redirect.
    */
   get publicUrl(): string {
-    const explicit = (process.env.PUBLIC_URL ?? "").trim().replace(/\/+$/, "");
+    // APP_URL first: Vercel refuses to store any variable whose name begins
+    // with PUBLIC_, on the grounds that some frameworks expose those to the
+    // browser. PUBLIC_URL still works everywhere else, and is kept because it
+    // is the name people reach for.
+    const explicit = (process.env.APP_URL ?? process.env.PUBLIC_URL ?? "")
+      .trim()
+      .replace(/\/+$/, "");
     if (explicit) return explicit;
     const host =
       process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL ?? "";
