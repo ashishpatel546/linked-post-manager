@@ -351,6 +351,15 @@
   /* An edit that has not been saved is not an edit that will be published, so
      the badge stops being quiet grey the moment the two disagree. */
   #status-badge.warn { color: var(--warn); font-weight: 600; }
+  /* Config on disk and config in this process have diverged. Not an error —
+     nothing is broken — but it explains a setting that "does not work". */
+  #stale-env {
+    margin: 0 20px 14px; padding: 11px 14px; border-radius: var(--radius-sm);
+    font-size: 12.5px; line-height: 1.5;
+    border: 1px solid var(--warn);
+    background: color-mix(in srgb, var(--warn) 10%, transparent);
+  }
+  @media (max-width: 760px) { #stale-env { margin: 0 14px 14px; } }
   /* How close the text is to the cap, without having to read the number. Fills
      amber past 90% and red past the limit — the same thresholds the count uses. */
   .gauge { height: 3px; border-radius: 99px; background: var(--panel-3); overflow: hidden; margin-top: 8px; }
@@ -366,10 +375,52 @@
   .thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
   /* Search results are a contact sheet, not a gallery: small tiles, as many as
      fit across, scrolling in place rather than pushing the form down a screen. */
+  /* 84px tiles were too small to tell one stock photo from another, which is
+     the only question this grid exists to answer. Bigger, taller scroll area,
+     and clicking one opens it full size rather than importing it blind. */
   .tiles {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
-    gap: 8px; margin-top: 10px; max-height: 320px; overflow-y: auto;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+    gap: 10px; margin-top: 10px; max-height: 440px; overflow-y: auto;
     overscroll-behavior: contain;
+  }
+  .tiles .thumb { position: relative; }
+  /* A hint that the tile opens rather than imports — the old grid imported on
+     click, so a click had to be a decision rather than a look. */
+  .tiles .thumb::after {
+    content: "View"; position: absolute; inset: auto 0 0 0;
+    padding: 4px 6px; font-size: 11px; font-weight: 600; text-align: center;
+    color: #fff; background: linear-gradient(transparent, rgba(0,0,0,.72));
+    opacity: 0; transition: opacity .12s ease;
+  }
+  .tiles .thumb:hover::after, .tiles .thumb:focus-visible::after { opacity: 1; }
+
+  /* Full-size viewer. A dialog rather than a div so Escape and the backdrop
+     come from the browser instead of three more listeners. */
+  #viewer {
+    border: 1px solid var(--line); border-radius: var(--radius); padding: 0;
+    background: var(--panel); color: var(--text); box-shadow: var(--shadow-lg);
+    max-width: min(92vw, 900px); max-height: 92vh; overflow: hidden;
+  }
+  #viewer::backdrop { background: rgba(0,0,0,.72); backdrop-filter: blur(2px); }
+  #viewer .viewer-image {
+    display: block; background: var(--panel-3);
+    max-width: min(92vw, 900px); max-height: 66vh; margin: 0 auto;
+    object-fit: contain;
+  }
+  #viewer .viewer-foot {
+    display: flex; gap: 12px; align-items: center; padding: 14px 16px;
+    border-top: 1px solid var(--line);
+  }
+  #viewer .viewer-meta { flex: 1; min-width: 0; }
+  #viewer .viewer-meta b {
+    display: block; font-size: 13px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
+  #viewer .viewer-meta a { font-size: 11.5px; color: var(--muted); }
+  #viewer .viewer-size { font-size: 11.5px; color: var(--muted); }
+  @media (max-width: 560px) {
+    #viewer .viewer-foot { flex-wrap: wrap; }
+    #viewer .viewer-foot button { flex: 1; }
   }
   .tiles .thumb img { width: 100%; height: 84px; }
   .thumb { position: relative; }
@@ -1001,6 +1052,9 @@
   </div>
 </main>
 
+<!-- Only ever appears when the running process and .env disagree. -->
+<div id="stale-env" hidden></div>
+
 <footer>
   <span id="foot-where">Running locally</span>
   <span class="spacer"></span>
@@ -1009,6 +1063,21 @@
 </footer>
 
 <div id="toast"></div>
+
+<!-- Full-size look at a search result before deciding to import it. A native
+     <dialog>, so Escape and the backdrop are the browser's job. -->
+<dialog id="viewer">
+  <img id="viewer-image" class="viewer-image" alt="">
+  <div class="viewer-foot">
+    <div class="viewer-meta">
+      <b id="viewer-title"></b>
+      <a id="viewer-page" target="_blank" rel="noreferrer"></a>
+    </div>
+    <span class="viewer-size" id="viewer-size"></span>
+    <button id="viewer-close">Close</button>
+    <button class="primary" id="viewer-import">Import</button>
+  </div>
+</dialog>
 
 <script type="module">
 // ---- token -----------------------------------------------------------------
@@ -1478,7 +1547,24 @@ async function loadStatus() {
   // inferred from the chip.
   $("foot-where").textContent =
     (s.storageBackend === "s3" ? "Storage: your S3 bucket" : "Storage: local files") +
-    ` · API ${s.apiVersion ?? ""}`.trimEnd();
+    ` · API ${s.apiVersion ?? ""}`.trimEnd() +
+    // What gets appended to every post. Said out loud because it is applied at
+    // publish time and is therefore invisible in the draft you are editing.
+    (s.profileSuffix ? ` · Every post ends with “${s.profileSuffix}”` : "");
+
+  // .env is read once at startup, so editing it while this is running changes
+  // nothing — and "the setting does not work" looks exactly like a bug.
+  const stale = s.staleEnv ?? [];
+  const warn = $("stale-env");
+  if (stale.length === 0) {
+    warn.hidden = true;
+  } else {
+    warn.hidden = false;
+    warn.textContent =
+      `This server started before .env was last edited, so ${stale.length} setting(s) ` +
+      `are not the ones on disk: ${stale.map((e) => `${e.key} is running “${e.running}”, .env says “${e.onDisk}”`).join("; ")}. ` +
+      "Restart it (Ctrl+C, then npm run ui) to pick them up.";
+  }
 
   // The theme is a per-draft choice, but choosing it once and having it stick
   // is what "configurable from the UI" means in practice — so the picker also
@@ -2307,6 +2393,13 @@ $("image-query").addEventListener("input", () => {
   $("image-query").dataset.touched = "1";
 });
 
+$("viewer-close").onclick = () => $("viewer").close();
+// Clicking the backdrop closes it. The dialog's own box is the only child, so
+// a click whose target is the dialog itself landed outside that box.
+$("viewer").addEventListener("click", (event) => {
+  if (event.target === $("viewer")) $("viewer").close();
+});
+
 $("image-search").onclick = (event) => guarded(event.target, "Searching…", async () => {
   const query = $("image-query").value.trim() || $("topic").value.trim();
   if (!query) { toast("Describe the image you want, or set a topic first.", "err"); return; }
@@ -2314,19 +2407,62 @@ $("image-search").onclick = (event) => guarded(event.target, "Searching…", asy
   const grid = $("image-results");
   grid.innerHTML = "";
   for (const r of results) {
-    const wrap = document.createElement("div");
+    const wrap = document.createElement("button");
+    wrap.type = "button";
     wrap.className = "thumb";
     wrap.style.cursor = "pointer";
+    wrap.style.padding = "0";
     wrap.title = `${r.title}\n${r.page}`;
     wrap.innerHTML = `<img alt="" loading="lazy" referrerpolicy="no-referrer">`;
     wrap.querySelector("img").src = r.thumbnail ?? r.url;
-    wrap.onclick = () => importImage(r);
+    // Opens it, rather than importing it. Deciding to publish a picture you
+    // have only seen at 84 pixels was the actual problem.
+    wrap.onclick = () => viewImage(r);
     grid.append(wrap);
   }
   grid.hidden = results.length === 0;
   $("image-notice").textContent = notice;
   $("image-notice").hidden = false;
 });
+
+/**
+ * Full-size preview of one search result.
+ *
+ * The grid can only ever show a thumbnail, and a thumbnail is not enough to
+ * decide whether to publish something under your own name — so the click opens
+ * the picture at full size, with where it came from, and Import is a second,
+ * separate press.
+ */
+function viewImage(r) {
+  const dialog = $("viewer");
+  const img = $("viewer-image");
+  const size = $("viewer-size");
+
+  size.textContent = "loading…";
+  img.removeAttribute("src");
+  // The full-resolution URL, not the thumbnail the grid used: the point is to
+  // see what would actually be imported.
+  img.src = r.url;
+  img.onload = () => { size.textContent = `${img.naturalWidth} × ${img.naturalHeight}`; };
+  img.onerror = () => {
+    // Some hosts refuse hotlinking. The thumbnail still tells you more than a
+    // broken box does, and importing goes through the server, so it may work
+    // even when the browser is refused.
+    size.textContent = "full size unavailable here — showing the thumbnail";
+    if (r.thumbnail && img.src !== r.thumbnail) img.src = r.thumbnail;
+  };
+
+  $("viewer-title").textContent = r.title || "Untitled";
+  const link = $("viewer-page");
+  link.href = r.page;
+  try { link.textContent = new URL(r.page).hostname; } catch { link.textContent = r.page; }
+
+  $("viewer-import").onclick = async () => {
+    dialog.close();
+    await importImage(r);
+  };
+  dialog.showModal();
+}
 
 async function importImage(r) {
   const host = (() => { try { return new URL(r.page).hostname; } catch { return r.page; } })();
@@ -2773,9 +2909,25 @@ $("card-pull").onclick = () => {
   drawCard();
 };
 
+// Headlines already offered for the post currently on screen. Sent back so a
+// second press gets a different line rather than the same one again — the model
+// is asked the same question otherwise, and answers it the same way.
+let cardTried = [];
+let cardTriedFor = "";
+
 $("card-write").onclick = (event) => guarded(event.target, "Writing…", async () => {
   const text = cardSource().trim();
   if (!text) { toast("Write or generate the post first — the card is drawn from it.", "err"); return; }
+
+  // A different post is a fresh start: lines rejected for the old one say
+  // nothing about this one.
+  if (cardTriedFor !== text) { cardTried = []; cardTriedFor = text; }
+
+  // Whatever is in the box counts as tried, including a line typed by hand and
+  // then handed back with "not this".
+  const current = $("card-headline").value.trim();
+  if (current && !cardTried.includes(current)) cardTried.push(current);
+
   const result = await api("/api/card-text", {
     method: "POST",
     body: JSON.stringify({
@@ -2784,12 +2936,18 @@ $("card-write").onclick = (event) => guarded(event.target, "Writing…", async (
       target: state.target,
       provider: $("provider").value,
       model: $("model").value || undefined,
+      avoid: cardTried,
     }),
   });
   if (result.eyebrow) $("card-eyebrow").value = result.eyebrow;
   $("card-headline").value = result.headline;
+  if (!cardTried.includes(result.headline)) cardTried.push(result.headline);
   drawCard();
-  toast(`Card line written with ${result.provider}. Edit it if it overstates anything.`);
+  toast(
+    cardTried.length > 1
+      ? `Line ${cardTried.length} from ${result.provider}. Press again for another angle.`
+      : `Card line written with ${result.provider}. Edit it if it overstates anything.`,
+  );
 });
 for (const id of ["card-eyebrow", "card-headline", "card-footnote"]) {
   $(id).addEventListener("input", drawCard);

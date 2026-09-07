@@ -476,8 +476,20 @@ export async function composeCardText(input: {
   target: Target;
   provider?: string;
   model?: string;
+  /**
+   * Lines already offered for this post. Pressing the button again asked the
+   * same question of the same model and unsurprisingly got the same answer
+   * back, which made "write it again" look broken. Naming the rejected lines is
+   * what actually makes the next one different — a temperature bump only
+   * reshuffles wording, and some models do not accept one at all.
+   */
+  avoid?: string[];
 }): Promise<{ eyebrow: string; headline: string; provider: string }> {
   const provider = getProvider(input.provider);
+
+  // Trimmed: a long rejection list crowds out the post itself, and the last few
+  // are the ones the model is most likely to repeat.
+  const rejected = (input.avoid ?? []).map((line) => line.trim()).filter(Boolean).slice(-6);
 
   const raw = await provider.complete(
     [
@@ -489,11 +501,19 @@ export async function composeCardText(input: {
           '{"eyebrow": "<2-4 words, a label>", "headline": "<the one line worth putting on a card>"}.\n' +
           "The headline is 6 to 16 words. It is the post's central claim, stated flatly enough to stand alone " +
           "when someone sees the image without the post. Not a summary, not a teaser, not a question, no hashtags, no quote marks.\n" +
-          "Never state a fact, number, or name that is not already in the post. If the post carries a [MARKER], leave it out of the card entirely.",
+          "Never state a fact, number, or name that is not already in the post. If the post carries a [MARKER], leave it out of the card entirely." +
+          (rejected.length
+            ? "\nThe reader has already rejected the lines listed under 'Already tried'. Write a genuinely different one: " +
+              "take a different angle on the post — a different claim, a different emphasis — rather than rephrasing the same sentence."
+            : ""),
       },
       {
         role: "user",
-        content: [input.topic ? `Topic: ${input.topic}` : "", `Post:\n\n${input.text.slice(0, 6000)}`]
+        content: [
+          input.topic ? `Topic: ${input.topic}` : "",
+          `Post:\n\n${input.text.slice(0, 6000)}`,
+          rejected.length ? `Already tried (do not repeat or reword):\n${rejected.map((line) => `- ${line}`).join("\n")}` : "",
+        ]
           .filter(Boolean)
           .join("\n\n"),
       },

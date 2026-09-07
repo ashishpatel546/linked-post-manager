@@ -3,7 +3,7 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { config } from "../config.ts";
+import { config, envFileValue } from "../config.ts";
 import { openInBrowser } from "../open.ts";
 import { keys, storage } from "../storage/index.ts";
 import { tokenStatus } from "../state/tokens.ts";
@@ -209,6 +209,41 @@ const MIME: Record<string, string> = {
 
 // ------------------------------------------------------------------ routing --
 
+/**
+ * Settings this process booted with that .env on disk no longer agrees with.
+ *
+ * `.env` is read once at startup, so editing it while the server runs changes
+ * nothing until a restart — and the symptom is that a setting "does not work",
+ * with no way to tell that from a bug. Only the values whose effect is visible
+ * in the app are checked; the list is not meant to be exhaustive.
+ *
+ * Never on a deployment: there is no .env there, and env vars are whatever the
+ * running function was given.
+ */
+function staleEnvKeys(): Array<{ key: string; running: string; onDisk: string }> {
+  if (config.isServerless) return [];
+
+  const watched = [
+    "LINKEDIN_PROFILE_LINK",
+    "LINKEDIN_PROFILE_LINK_LABEL",
+    "LINKEDIN_ORGANIZATION_NAME",
+    "LINKEDIN_ORGANIZATION_URN",
+    "LINKEDIN_DECK_THEME",
+    "DRAFT_PROVIDER",
+    "OPENAI_MODEL",
+  ];
+
+  const stale: Array<{ key: string; running: string; onDisk: string }> = [];
+  for (const key of watched) {
+    const onDisk = envFileValue(key);
+    // Absent from .env means "not being overridden", not "should be empty".
+    if (onDisk === undefined) continue;
+    const running = process.env[key] ?? "";
+    if (onDisk !== running) stale.push({ key, running, onDisk });
+  }
+  return stale;
+}
+
 async function handleApi(
   req: http.IncomingMessage,
   url: URL,
@@ -234,6 +269,13 @@ async function handleApi(
       // Guarded, not just optional-chained: sessionFor throws when no
       // SESSION_SECRET is set, which is the normal state on a laptop.
       signedInAs: config.authMode === "oauth" ? (sessionFor(req)?.name ?? null) : null,
+      // What actually gets appended to every post, spelled out rather than
+      // left to be discovered in a preview — and `staleEnv` says when this
+      // process is running values that .env no longer contains.
+      profileSuffix: config.profileLink
+        ? `${config.profileLinkLabel} ${config.profileLink}`.trim()
+        : null,
+      staleEnv: staleEnvKeys(),
     };
   }
 
@@ -532,6 +574,8 @@ async function handleApi(
       target: target(body),
       provider: str(body, "provider"),
       model: str(body, "model"),
+      // Lines the author has already seen and asked to replace.
+      avoid: stringArray(body, "avoid"),
     });
   }
 
